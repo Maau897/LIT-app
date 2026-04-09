@@ -1,8 +1,23 @@
 import gspread
 import pandas as pd
 import re
+import streamlit as st
+from google.oauth2.service_account import Credentials
+import gspread
 
-NOMBRE_ARCHIVO_CREDENCIALES = "credenciales.json"
+def obtener_spreadsheet():
+    creds_dict = st.secrets["gcp_service_account"]
+
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    gc = gspread.authorize(creds)
+
+    return gc.open_by_key("15ph6nHs8SgxqUX3aKiRKjR-0BsG2Z-8mg6qy_NSueBg")
+    
 SPREADSHEET_ID = "15ph6nHs8SgxqUX3aKiRKjR-0BsG2Z-8mg6qy_NSueBg"
 
 
