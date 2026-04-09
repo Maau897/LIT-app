@@ -2,8 +2,13 @@ import gspread
 import pandas as pd
 import re
 import streamlit as st
-from google.oauth2.service_account import Credentials
+import streamlit as st
 import gspread
+from google.oauth2.service_account import Credentials
+
+
+SPREADSHEET_ID = "15ph6nHs8SgxqUX3aKiRKjR-0BsG2Z-8mg6qy_NSueBg"
+
 
 def obtener_spreadsheet():
     creds_dict = st.secrets["gcp_service_account"]
@@ -16,16 +21,15 @@ def obtener_spreadsheet():
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     gc = gspread.authorize(creds)
 
-    return gc.open_by_key("15ph6nHs8SgxqUX3aKiRKjR-0BsG2Z-8mg6qy_NSueBg")
-    
-SPREADSHEET_ID = "15ph6nHs8SgxqUX3aKiRKjR-0BsG2Z-8mg6qy_NSueBg"
+    return gc.open_by_key(SPREADSHEET_ID)
 
+def conectar_sheet(nombre_hoja=None):
+    spreadsheet = obtener_spreadsheet()
 
-def conectar_sheet():
-    gc = gspread.service_account(filename=NOMBRE_ARCHIVO_CREDENCIALES)
-    sheet = gc.open_by_key(SPREADSHEET_ID)
-    worksheet = sheet.get_worksheet(0)
-    return worksheet
+    if nombre_hoja:
+        return spreadsheet.worksheet(nombre_hoja)
+
+    return spreadsheet.get_worksheet(0)
 
 def leer_sheet_como_dataframe():
     ws = conectar_sheet()
