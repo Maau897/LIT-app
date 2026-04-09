@@ -11,7 +11,7 @@ SPREADSHEET_ID = "15ph6nHs8SgxqUX3aKiRKjR-0BsG2Z-8mg6qy_NSueBg"
 
 
 def obtener_spreadsheet():
-    creds_dict = st.secrets["gcp_service_account"]
+    creds_dict = st.secrets["service_account"]
 
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
