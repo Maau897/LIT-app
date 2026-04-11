@@ -590,3 +590,17 @@ def aprobar_usuario(id_usuario: int):
 
     conn.commit()
     conn.close()
+
+def crear_admin_inicial(email: str, password: str):
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    password_hash = hash_password(password)
+
+    cursor.execute("""
+        INSERT OR IGNORE INTO usuarios (email, password_hash, aprobado, es_admin)
+        VALUES (?, ?, 1, 1)
+    """, (email.strip().lower(), password_hash))
+
+    conn.commit()
+    conn.close()
