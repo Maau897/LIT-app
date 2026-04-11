@@ -35,7 +35,7 @@ from logic import (
     contar_racks_activos,
     obtener_ocupacion_racks
 )
-
+crear_tablas ()
 def pantalla_acceso():
     st.title("Acceso al sistema")
     pestaña_login, pestaña_registro = st.tabs(["Iniciar sesión", "Crear cuenta"])
