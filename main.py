@@ -1,5 +1,6 @@
 import sqlite3
-
+from logic import hash_password
+from database import conectar_db
 from database import crear_tablas
 from logic import (
     inicializar_rack_suero,
@@ -11,6 +12,7 @@ from logic import (
     generar_voluntarios_prueba
 )
 
+crear_tablas()
 
 def ver_tablas():
     conn = sqlite3.connect("iner_voluntarios.db")
@@ -37,11 +39,11 @@ def main():
     inicializar_rack_suero()
 
     # 4. Generar voluntarios de prueba
-    voluntarios = generar_voluntarios_prueba(15)
+    #voluntarios = generar_voluntarios_prueba(15)
 
     # 5. Registrar voluntarios
-    for datos_voluntario in voluntarios:
-        registrar_voluntario(datos_voluntario)
+    #for datos_voluntario in voluntarios:
+        #registrar_voluntario(datos_voluntario)
 
     # 6. Mostrar racks registrados
     print("\nRACKS REGISTRADOS:")
@@ -62,7 +64,6 @@ def main():
     print("\nVISUALIZACIÓN DE PBMC_1:")
     rack_pbmc = ver_rack_pbmc("PBMC_1")
     imprimir_rack(rack_pbmc)
-
 
 if __name__ == "__main__":
     main()

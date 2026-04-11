@@ -2,6 +2,8 @@ from datetime import datetime
 import calendar
 from database import conectar_db
 import pandas as pd
+import bcrypt
+from database import conectar_db
 
 def sumar_meses(fecha_str, meses):
     fecha = datetime.strptime(fecha_str, "%Y-%m-%d")
@@ -499,3 +501,92 @@ def obtener_ocupacion_racks():
 
     conn.close()
     return resultados
+def hash_password(password: str) -> str:
+    password_bytes = password.encode("utf-8")
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    return hashed.decode("utf-8")
+
+
+def verificar_password(password: str, password_hash: str) -> bool:
+    return bcrypt.checkpw(
+        password.encode("utf-8"),
+        password_hash.encode("utf-8")
+    )
+
+
+def registrar_usuario(email: str, password: str):
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    password_hash = hash_password(password)
+
+    cursor.execute("""
+        INSERT INTO usuarios (email, password_hash, aprobado, es_admin)
+        VALUES (?, ?, 0, 0)
+    """, (email.strip().lower(), password_hash))
+
+    conn.commit()
+    conn.close()
+
+
+def autenticar_usuario(email: str, password: str):
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT id_usuario, email, password_hash, aprobado, es_admin
+        FROM usuarios
+        WHERE email = ?
+    """, (email.strip().lower(),))
+
+    usuario = cursor.fetchone()
+    conn.close()
+
+    if not usuario:
+        return {"ok": False, "mensaje": "Usuario no encontrado."}
+
+    id_usuario, email_db, password_hash, aprobado, es_admin = usuario
+
+    if not verificar_password(password, password_hash):
+        return {"ok": False, "mensaje": "Contraseña incorrecta."}
+
+    if aprobado != 1:
+        return {"ok": False, "mensaje": "Tu cuenta aún no ha sido aprobada."}
+
+    return {
+        "ok": True,
+        "id_usuario": id_usuario,
+        "email": email_db,
+        "es_admin": bool(es_admin)
+    }
+
+
+def obtener_usuarios_pendientes():
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT id_usuario, email, fecha_registro
+        FROM usuarios
+        WHERE aprobado = 0
+        ORDER BY fecha_registro
+    """)
+
+    resultados = cursor.fetchall()
+    conn.close()
+    return resultados
+
+
+def aprobar_usuario(id_usuario: int):
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE usuarios
+        SET aprobado = 1
+        WHERE id_usuario = ?
+    """, (id_usuario,))
+
+    conn.commit()
+    conn.close()

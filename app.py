@@ -1,6 +1,11 @@
 import streamlit as st
 import pandas as pd
-
+from logic import (
+    autenticar_usuario,
+    registrar_usuario,
+    obtener_usuarios_pendientes,
+    aprobar_usuario
+)
 from google_sheets import (
     leer_sheet_como_dataframe,
     preparar_datos_hospitalarios,
@@ -31,6 +36,55 @@ from logic import (
     obtener_ocupacion_racks
 )
 
+def pantalla_acceso():
+    st.title("Acceso al sistema")
+    pestaña_login, pestaña_registro = st.tabs(["Iniciar sesión", "Crear cuenta"])
+
+    with pestaña_login:
+        email_login = st.text_input("Correo", key="login_email")
+        password_login = st.text_input("Contraseña", type="password", key="login_password")
+
+        if st.button("Ingresar"):
+            try:
+                resultado = autenticar_usuario(email_login, password_login)
+
+                if resultado["ok"]:
+                    st.session_state["autenticado"] = True
+                    st.session_state["usuario_email"] = resultado["email"]
+                    st.session_state["es_admin"] = resultado["es_admin"]
+                    st.rerun()
+                else:
+                    st.error(resultado["mensaje"])
+            except Exception as e:
+                st.error(f"Error al iniciar sesión: {e}")
+
+    with pestaña_registro:
+        email_registro = st.text_input("Correo institucional o personal", key="registro_email")
+        password_registro = st.text_input("Contraseña", type="password", key="registro_password")
+        password_registro_2 = st.text_input("Confirmar contraseña", type="password", key="registro_password_2")
+
+        if st.button("Crear cuenta"):
+            try:
+                if not email_registro or not password_registro:
+                    st.warning("Completa correo y contraseña.")
+                elif password_registro != password_registro_2:
+                    st.warning("Las contraseñas no coinciden.")
+                else:
+                    registrar_usuario(email_registro, password_registro)
+                    st.success("Cuenta creada. Queda pendiente de aprobación.")
+            except Exception as e:
+                st.error(f"No se pudo crear la cuenta: {e}")
+
+
+if "autenticado" not in st.session_state:
+    st.session_state["autenticado"] = False
+
+if "es_admin" not in st.session_state:
+    st.session_state["es_admin"] = False
+
+if not st.session_state["autenticado"]:
+    pantalla_acceso()
+    st.stop()
 
 st.set_page_config(page_title="Sistema INER - Voluntarios", layout="wide")
 crear_tablas()
@@ -418,3 +472,30 @@ if seccion == "C23-25":
     mostrar_biobanco()
 elif seccion == "B37-25":
     mostrar_proyecto_hospitalario()
+
+st.sidebar.write(f"Sesión: {st.session_state.get('usuario_email', '')}")
+if st.session_state.get("es_admin", False):
+    st.subheader("Aprobación de usuarios")
+
+    pendientes = obtener_usuarios_pendientes()
+
+    if pendientes:
+        for id_usuario, email, fecha_registro in pendientes:
+            col1, col2 = st.columns([4, 1])
+
+            with col1:
+                st.write(f"{email} — registrado el {fecha_registro}")
+
+            with col2:
+                if st.button("Aprobar", key=f"aprobar_{id_usuario}"):
+                    aprobar_usuario(id_usuario)
+                    st.success(f"Usuario {email} aprobado.")
+                    st.rerun()
+    else:
+        st.info("No hay usuarios pendientes.")
+if st.sidebar.button("Cerrar sesión"):
+    st.session_state["autenticado"] = False
+    st.session_state["usuario_email"] = ""
+    st.session_state["es_admin"] = False
+    st.rerun()
+

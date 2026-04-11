@@ -69,21 +69,33 @@ def crear_tablas():
     """)
 
     cursor.execute("""
-CREATE TABLE IF NOT EXISTS alicuotas_pbmc (
-    id_pbmc INTEGER PRIMARY KEY AUTOINCREMENT,
-    id_voluntario TEXT,
-    tipo_toma TEXT,
-    numero_alicuota INTEGER,
-    conteo_celular TEXT,
-    fecha_ingreso TEXT,
-    id_rack TEXT,
-    fila INTEGER,
-    columna INTEGER,
-    FOREIGN KEY (id_voluntario) REFERENCES voluntarios(id_voluntario),
-    FOREIGN KEY (id_rack) REFERENCES racks(id_rack)
-)
-""")
-
+    CREATE TABLE IF NOT EXISTS alicuotas_pbmc (
+        id_pbmc INTEGER PRIMARY KEY AUTOINCREMENT,
+        id_voluntario TEXT,
+        tipo_toma TEXT,
+        numero_alicuota INTEGER,
+        conteo_celular TEXT,
+        fecha_ingreso TEXT,
+        id_rack TEXT,
+        fila INTEGER,
+        columna INTEGER,
+        FOREIGN KEY (id_voluntario) REFERENCES voluntarios(id_voluntario),
+        FOREIGN KEY (id_rack) REFERENCES racks(id_rack)
+    )
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS usuarios (
+        id_usuario INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        aprobado INTEGER DEFAULT 0,
+        es_admin INTEGER DEFAULT 0,
+        fecha_registro TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
     conn.commit()
     conn.close()
     print("Base de datos y tablas creadas correctamente.")
+
+
+    
