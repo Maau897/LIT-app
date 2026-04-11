@@ -1,54 +1,51 @@
+﻿import pandas as pd
 import streamlit as st
-import pandas as pd
-from logic import (
-    autenticar_usuario,
-    registrar_usuario,
-    obtener_usuarios_pendientes,
-    aprobar_usuario
-)
-from google_sheets import (
-    leer_sheet_como_dataframe,
-    preparar_datos_hospitalarios,
-    buscar_fila_por_clave,
-    obtener_fila_como_diccionario,
-    actualizar_campos_por_clave,
-    normalizar_diagnostico,
-    clasificar_edad,
-    preparar_datos_hospitalarios,
-    obtener_columnas_por_toma,
-    construir_tabla_resumen_pacientes,
-    preparar_resumen_influenza_observaciones
-)
+
 from database import crear_tablas
+from google_sheets import (
+    actualizar_campos_por_clave,
+    buscar_fila_por_clave,
+    construir_tabla_resumen_pacientes,
+    leer_sheet_como_dataframe,
+    obtener_columnas_por_toma,
+    obtener_fila_como_diccionario,
+    preparar_datos_hospitalarios,
+    preparar_resumen_influenza_observaciones,
+)
 from logic import (
+    aprobar_usuario,
+    autenticar_usuario,
+    buscar_voluntario_por_id,
+    contar_racks_activos,
+    contar_visitas_pendientes,
+    contar_voluntarios,
+    exportar_a_excel,
+    obtener_ocupacion_racks,
+    obtener_usuarios_pendientes,
+    registrar_usuario,
     registrar_voluntario,
+    ver_alicuotas_pbmc_voluntario,
+    ver_alicuotas_suero_voluntario,
+    ver_rack_pbmc,
+    ver_rack_suero,
     ver_racks,
     ver_visitas,
-    ver_rack_suero,
-    ver_rack_pbmc,
-    exportar_a_excel,
-    buscar_voluntario_por_id,
-    ver_alicuotas_suero_voluntario,
-    ver_alicuotas_pbmc_voluntario,
-    contar_voluntarios,
-    contar_visitas_pendientes,
-    contar_racks_activos,
-    obtener_ocupacion_racks
 )
-crear_tablas ()
 from logic import crear_admin_inicial
 
+st.set_page_config(page_title="Sistema INER - Voluntarios", layout="wide")
 crear_tablas()
 
 crear_admin_inicial(
     st.secrets["admin_email"],
     st.secrets["admin_password"]
 )
+
 def pantalla_acceso():
     st.title("Acceso al sistema")
-    pestaña_login, pestaña_registro = st.tabs(["Iniciar sesión", "Crear cuenta"])
+    pestana_login, pestana_registro = st.tabs(["Iniciar sesión", "Crear cuenta"])
 
-    with pestaña_login:
+    with pestana_login:
         email_login = st.text_input("Correo", key="login_email")
         password_login = st.text_input("Contraseña", type="password", key="login_password")
 
@@ -66,7 +63,7 @@ def pantalla_acceso():
             except Exception as e:
                 st.error(f"Error al iniciar sesión: {e}")
 
-    with pestaña_registro:
+    with pestana_registro:
         email_registro = st.text_input("Correo institucional o personal", key="registro_email")
         password_registro = st.text_input("Contraseña", type="password", key="registro_password")
         password_registro_2 = st.text_input("Confirmar contraseña", type="password", key="registro_password_2")
@@ -93,9 +90,6 @@ if "es_admin" not in st.session_state:
 if not st.session_state["autenticado"]:
     pantalla_acceso()
     st.stop()
-
-st.set_page_config(page_title="Sistema INER - Voluntarios", layout="wide")
-crear_tablas()
 
 
 def mostrar_biobanco():
@@ -187,7 +181,7 @@ def mostrar_biobanco():
             "correo": correo,
             "telefono": telefono,
             "patologias": patologias,
-            "observaciones": observaciones
+            "observaciones": observaciones,
         }
 
         try:
@@ -246,7 +240,7 @@ def mostrar_biobanco():
                     label="Descargar reporte Excel",
                     data=f,
                     file_name=archivo,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
         except Exception as e:
             st.error(f"Error al exportar: {e}")
@@ -265,7 +259,7 @@ def mostrar_biobanco():
                     "apellido_paterno", "apellido_materno", "nombre",
                     "genero", "residencia", "fecha_nacimiento", "edad",
                     "peso", "estatura", "tubos_amarillos", "tubos_verdes",
-                    "correo", "telefono", "patologias", "observaciones"
+                    "correo", "telefono", "patologias", "observaciones",
                 ]
 
                 df_voluntario = pd.DataFrame([voluntario], columns=columnas_voluntario)
@@ -276,7 +270,7 @@ def mostrar_biobanco():
                 if visitas:
                     df_visitas = pd.DataFrame(
                         visitas,
-                        columns=["Tipo toma", "Fecha programada", "Fecha real", "Estado"]
+                        columns=["Tipo toma", "Fecha programada", "Fecha real", "Estado"],
                     )
                     st.write("### Visitas")
                     st.dataframe(df_visitas, use_container_width=True)
@@ -285,7 +279,7 @@ def mostrar_biobanco():
                 if suero:
                     df_suero = pd.DataFrame(
                         suero,
-                        columns=["Núm alícuota", "Fecha ingreso", "Rack", "Fila", "Columna", "Tipo toma"]
+                        columns=["Núm alícuota", "Fecha ingreso", "Rack", "Fila", "Columna", "Tipo toma"],
                     )
                     st.write("### Alícuotas de suero")
                     st.dataframe(df_suero, use_container_width=True)
@@ -294,7 +288,7 @@ def mostrar_biobanco():
                 if pbmc:
                     df_pbmc = pd.DataFrame(
                         pbmc,
-                        columns=["Núm alícuota", "Conteo celular", "Fecha ingreso", "Rack", "Fila", "Columna", "Tipo toma"]
+                        columns=["Núm alícuota", "Conteo celular", "Fecha ingreso", "Rack", "Fila", "Columna", "Tipo toma"],
                     )
                     st.write("### Alícuotas PBMC")
                     st.dataframe(df_pbmc, use_container_width=True)
@@ -315,6 +309,10 @@ def mostrar_proyecto_hospitalario():
         df_sheet = preparar_datos_hospitalarios(df_sheet)
         df_sheet = preparar_resumen_influenza_observaciones(df_sheet)
 
+        if "CLAVE DE LABORATORIO" not in df_sheet.columns:
+            st.error("La hoja no contiene la columna 'CLAVE DE LABORATORIO'.")
+            return
+
         st.subheader("Búsqueda por clave de laboratorio")
         clave_busqueda = st.text_input("Ingresa la clave de laboratorio", placeholder="Ej. VSR_H_001")
 
@@ -328,18 +326,18 @@ def mostrar_proyecto_hospitalario():
                 st.dataframe(df_filtrado_clave, use_container_width=True)
             else:
                 st.warning("No se encontró ningún paciente con esa clave de laboratorio.")
-        
-                st.subheader("Edición dinámica de tomas")
+
+        st.subheader("Edición dinámica de tomas")
 
         clave_edicion = st.text_input(
             "Clave de laboratorio para editar",
             placeholder="Ej. VSR_H_001",
-            key="clave_edicion"
+            key="clave_edicion",
         )
 
         toma_seleccionada = st.selectbox(
             "Selecciona la toma",
-            [f"T{i}" for i in range(1, 15)]
+            [f"T{i}" for i in range(1, 15)],
         )
 
         if st.button("Cargar paciente"):
@@ -380,7 +378,7 @@ def mostrar_proyecto_hospitalario():
                         nuevo_valor = st.text_input(
                             col,
                             value=valor_actual,
-                            key=f"{col}_{numero_toma}"
+                            key=f"{col}_{numero_toma}",
                         )
 
                     cambios[col] = nuevo_valor
@@ -390,7 +388,6 @@ def mostrar_proyecto_hospitalario():
                         actualizar_campos_por_clave(clave_actual, cambios)
                         st.success("Cambios guardados correctamente en Google Sheets")
 
-                        # Recargar fila actualizada
                         numero_fila = buscar_fila_por_clave(clave_actual)
                         fila_actualizada = obtener_fila_como_diccionario(numero_fila)
                         st.session_state["fila_paciente"] = fila_actualizada
@@ -399,7 +396,7 @@ def mostrar_proyecto_hospitalario():
                         st.error(f"Error al guardar: {e}")
             else:
                 st.warning(f"No se encontraron columnas para {toma_seleccionada}")
-                
+
         st.subheader("Resumen por diagnóstico")
 
         if "DIAGNOSTICO_GRUPO" in df_sheet.columns:
@@ -419,26 +416,23 @@ def mostrar_proyecto_hospitalario():
         if "GRUPO_EDAD" in df_sheet.columns and "DIAGNOSTICO_GRUPO" in df_sheet.columns:
             tabla_cruzada = pd.crosstab(
                 df_sheet["GRUPO_EDAD"],
-                df_sheet["DIAGNOSTICO_GRUPO"]
+                df_sheet["DIAGNOSTICO_GRUPO"],
             )
 
-            # Orden fijo de edades
             orden_edades = ["Bebé", "Niño", "Adolescente", "Adulto"]
             tabla_cruzada = tabla_cruzada.reindex(
                 [edad for edad in orden_edades if edad in tabla_cruzada.index]
             )
 
-            # Orden sugerido de diagnósticos
             columnas_preferidas = [
                 "COVID",
                 "Coinfección COVID",
                 "INFLUENZA",
                 "Coinfección INFLUENZA",
                 "VSR",
-                "Coinfección VSR"
+                "Coinfección VSR",
             ]
 
-            # Agregar también cualquier diagnóstico nuevo que exista
             columnas_existentes = list(tabla_cruzada.columns)
             columnas_extra = [col for col in columnas_existentes if col not in columnas_preferidas]
             columnas_finales = [col for col in columnas_preferidas if col in columnas_existentes] + columnas_extra
@@ -458,6 +452,7 @@ def mostrar_proyecto_hospitalario():
                 st.dataframe(conteo_influenza, use_container_width=True)
             else:
                 st.info("No se encontraron registros de influenza en observaciones.")
+
         st.subheader("Datos completos del Google Sheet")
         st.dataframe(df_sheet, use_container_width=True)
 
@@ -465,15 +460,14 @@ def mostrar_proyecto_hospitalario():
         df_resumen_pacientes = construir_tabla_resumen_pacientes(df_sheet)
         st.dataframe(df_resumen_pacientes, use_container_width=True)
 
-        
-
     except Exception as e:
         st.error(f"Error al leer Google Sheets: {e}")
-        
+
+
 st.sidebar.title("Navegación")
 seccion = st.sidebar.radio(
     "Selecciona un módulo",
-    ["C23-25", "B37-25"]
+    ["C23-25", "B37-25"],
 )
 
 if seccion == "C23-25":
@@ -483,16 +477,16 @@ elif seccion == "B37-25":
 
 st.sidebar.write(f"Sesión: {st.session_state.get('usuario_email', '')}")
 if st.session_state.get("es_admin", False):
-    st.subheader("Aprobación de usuarios")
+    st.sidebar.subheader("Aprobación de usuarios")
 
     pendientes = obtener_usuarios_pendientes()
 
     if pendientes:
         for id_usuario, email, fecha_registro in pendientes:
-            col1, col2 = st.columns([4, 1])
+            col1, col2 = st.sidebar.columns([4, 1])
 
             with col1:
-                st.write(f"{email} — registrado el {fecha_registro}")
+                st.write(f"{email} - registrado el {fecha_registro}")
 
             with col2:
                 if st.button("Aprobar", key=f"aprobar_{id_usuario}"):
@@ -500,10 +494,10 @@ if st.session_state.get("es_admin", False):
                     st.success(f"Usuario {email} aprobado.")
                     st.rerun()
     else:
-        st.info("No hay usuarios pendientes.")
+        st.sidebar.info("No hay usuarios pendientes.")
+
 if st.sidebar.button("Cerrar sesión"):
     st.session_state["autenticado"] = False
     st.session_state["usuario_email"] = ""
     st.session_state["es_admin"] = False
     st.rerun()
-

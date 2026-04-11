@@ -1,9 +1,8 @@
+﻿import re
+
 import gspread
 import pandas as pd
-import re
 import streamlit as st
-import streamlit as st
-import gspread
 from google.oauth2.service_account import Credentials
 
 
@@ -23,6 +22,7 @@ def obtener_spreadsheet():
 
     return gc.open_by_key(SPREADSHEET_ID)
 
+
 def conectar_sheet(nombre_hoja=None):
     spreadsheet = obtener_spreadsheet()
 
@@ -31,15 +31,18 @@ def conectar_sheet(nombre_hoja=None):
 
     return spreadsheet.get_worksheet(0)
 
+
 def leer_sheet_como_dataframe():
     ws = conectar_sheet()
     datos = ws.get_all_records()
     return pd.DataFrame(datos)
 
+
 def obtener_encabezados():
     ws = conectar_sheet()
     encabezados = ws.row_values(1)
     return encabezados
+
 
 def buscar_fila_por_clave(clave_laboratorio, nombre_columna="CLAVE DE LABORATORIO"):
     ws = conectar_sheet()
@@ -55,12 +58,13 @@ def buscar_fila_por_clave(clave_laboratorio, nombre_columna="CLAVE DE LABORATORI
 
     idx_col = encabezados.index(nombre_columna)
 
-    for numero_fila, fila in enumerate(datos[1:], start=2):  # empieza en 2 por encabezados
+    for numero_fila, fila in enumerate(datos[1:], start=2):
         valor = fila[idx_col] if idx_col < len(fila) else ""
         if str(valor).strip().upper() == str(clave_laboratorio).strip().upper():
             return numero_fila
 
     return None
+
 
 def obtener_fila_como_diccionario(numero_fila):
     ws = conectar_sheet()
@@ -71,6 +75,7 @@ def obtener_fila_como_diccionario(numero_fila):
         valores.extend([""] * (len(encabezados) - len(valores)))
 
     return dict(zip(encabezados, valores))
+
 
 def actualizar_campos_por_clave(clave_laboratorio, cambios, nombre_columna="CLAVE DE LABORATORIO"):
     ws = conectar_sheet()
@@ -89,6 +94,7 @@ def actualizar_campos_por_clave(clave_laboratorio, cambios, nombre_columna="CLAV
         ws.update_cell(numero_fila, numero_columna, valor_nuevo)
 
     return True
+
 
 def normalizar_diagnostico(valor):
     if pd.isna(valor):
@@ -115,11 +121,11 @@ def normalizar_diagnostico(valor):
 
     if len(diagnosticos_detectados) > 1:
         return "Coinfección " + "/".join(diagnosticos_detectados)
-    elif len(diagnosticos_detectados) == 1:
+    if len(diagnosticos_detectados) == 1:
         return diagnosticos_detectados[0]
-    else:
-        return texto
-    
+    return texto
+
+
 def clasificar_edad(valor):
     if valor is None:
         return "Sin dato"
@@ -134,13 +140,13 @@ def clasificar_edad(valor):
 
         if edad < 12:
             return "Niño"
-        elif edad < 18:
+        if edad < 18:
             return "Adolescente"
-        else:
-            return "Adulto"
+        return "Adulto"
 
-    except:
+    except Exception:
         return "Sin clasificar"
+
 
 def preparar_datos_hospitalarios(df):
     df = df.copy()
@@ -153,6 +159,7 @@ def preparar_datos_hospitalarios(df):
 
     return df
 
+
 def obtener_columnas_por_toma(toma):
     ws = conectar_sheet()
     encabezados = ws.row_values(1)
@@ -162,8 +169,8 @@ def obtener_columnas_por_toma(toma):
 
     return columnas_toma
 
-def es_fecha_numerica_valida(valor):
 
+def es_fecha_numerica_valida(valor):
     if pd.isna(valor):
         return False
 
@@ -177,15 +184,14 @@ def es_fecha_numerica_valida(valor):
     if texto_mayus in ["NA", "N/A", "SIN MUESTRA", "NO"]:
         return False
 
-    # Si contiene letras, no se considera fecha válida
     if any(c.isalpha() for c in texto):
         return False
 
-    # Si contiene al menos un número, sí cuenta
     if any(c.isdigit() for c in texto):
         return True
 
     return False
+
 
 def obtener_tomas_disponibles(df):
     columnas = df.columns.tolist()
@@ -197,6 +203,7 @@ def obtener_tomas_disponibles(df):
             tomas.add(int(match.group(1)))
 
     return sorted(tomas)
+
 
 def construir_tabla_resumen_pacientes(df):
     df = df.copy()
@@ -223,10 +230,11 @@ def construir_tabla_resumen_pacientes(df):
             "DIAGNÓSTICO": fila.get("DIAGNÓSTICO", ""),
             "CLAVE DE LABORATORIO": fila.get("CLAVE DE LABORATORIO", ""),
             "OBSERVACIONES": fila.get("OBSERVACIONES", ""),
-            "TOTAL TOMAS": total_tomas
+            "TOTAL TOMAS": total_tomas,
         })
 
     return pd.DataFrame(resumen)
+
 
 def clasificar_influenza_observaciones(texto):
     if pd.isna(texto):
@@ -237,12 +245,10 @@ def clasificar_influenza_observaciones(texto):
     if texto == "":
         return None
 
-    # Detectar subtipo principal de influenza
     tiene_ah1n1 = "AH1N1" in texto
     tiene_ah3n2 = "AH3N2" in texto
     tiene_influenza_generica = "INFLUENZA" in texto and not (tiene_ah1n1 or tiene_ah3n2)
 
-    # Lista de agentes detectados
     agentes = []
 
     if tiene_ah1n1:
@@ -252,7 +258,6 @@ def clasificar_influenza_observaciones(texto):
     if tiene_influenza_generica:
         agentes.append("INFLUENZA")
 
-    # Otros agentes frecuentes que pueden acompañar
     otros_patrones = {
         "M PNEUMONIAE": "M PNEUMONIAE",
         "MYCOPLASMA": "M PNEUMONIAE",
@@ -271,22 +276,27 @@ def clasificar_influenza_observaciones(texto):
         if patron in texto and nombre not in agentes:
             agentes.append(nombre)
 
-    # Si no hay influenza, no entra en esta clasificación
     if not any(x in agentes for x in ["AH1N1", "AH3N2", "INFLUENZA"]):
         return None
 
-    # Si solo hay influenza sola
     if len(agentes) == 1:
         return agentes[0]
 
-    # Si hay influenza + otro(s), es coinfección
     return "Coinfección " + " + ".join(agentes)
+
+
+def _obtener_columna_observaciones(df):
+    for nombre in ("OBSERVACIONES", "Observaciones", "observaciones"):
+        if nombre in df.columns:
+            return nombre
+    return None
 
 
 def preparar_resumen_influenza_observaciones(df):
     df = df.copy()
+    columna_observaciones = _obtener_columna_observaciones(df)
 
-    if "Observaciones" in df.columns:
-        df["INFLUENZA_OBS_GRUPO"] = df["Observaciones"].apply(clasificar_influenza_observaciones)
+    if columna_observaciones:
+        df["INFLUENZA_OBS_GRUPO"] = df[columna_observaciones].apply(clasificar_influenza_observaciones)
 
     return df

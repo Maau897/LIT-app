@@ -1,9 +1,13 @@
 import sqlite3
+from pathlib import Path
 
-DB_NAME = "iner_voluntarios.db"
+DB_NAME = Path(__file__).resolve().parent / "iner_voluntarios.db"
+
 
 def conectar_db():
-    return sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(DB_NAME)
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 def crear_tablas():
     conn = conectar_db()
