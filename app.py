@@ -36,6 +36,14 @@ from logic import (
     obtener_ocupacion_racks
 )
 crear_tablas ()
+from logic import crear_admin_inicial
+
+crear_tablas()
+
+crear_admin_inicial(
+    st.secrets["admin_email"],
+    st.secrets["admin_password"]
+)
 def pantalla_acceso():
     st.title("Acceso al sistema")
     pestaña_login, pestaña_registro = st.tabs(["Iniciar sesión", "Crear cuenta"])
