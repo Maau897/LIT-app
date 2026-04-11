@@ -477,24 +477,20 @@ elif seccion == "B37-25":
 
 st.sidebar.write(f"Sesión: {st.session_state.get('usuario_email', '')}")
 if st.session_state.get("es_admin", False):
-    st.sidebar.subheader("Aprobación de usuarios")
+    with st.sidebar:
+        st.subheader("Aprobación de usuarios")
 
-    pendientes = obtener_usuarios_pendientes()
+        pendientes = obtener_usuarios_pendientes()
 
-    if pendientes:
-        for id_usuario, email, fecha_registro in pendientes:
-            col1, col2 = st.sidebar.columns([4, 1])
-
-            with col1:
+        if pendientes:
+            for id_usuario, email, fecha_registro in pendientes:
                 st.write(f"{email} - registrado el {fecha_registro}")
-
-            with col2:
-                if st.button("Aprobar", key=f"aprobar_{id_usuario}"):
+                if st.button("Aprobar", key=f"aprobar_{id_usuario}", use_container_width=True):
                     aprobar_usuario(id_usuario)
                     st.success(f"Usuario {email} aprobado.")
                     st.rerun()
-    else:
-        st.sidebar.info("No hay usuarios pendientes.")
+        else:
+            st.info("No hay usuarios pendientes.")
 
 if st.sidebar.button("Cerrar sesión"):
     st.session_state["autenticado"] = False
