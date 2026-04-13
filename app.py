@@ -430,14 +430,6 @@ def mostrar_proyecto_hospitalario():
             st.error("La hoja no contiene la columna 'CLAVE DE LABORATORIO'.")
             return
 
-        col_a, col_b, col_c = st.columns(3)
-        with col_a:
-            st.metric("Pacientes cargados", len(df_sheet))
-        with col_b:
-            st.metric("Tomas pendientes", len(construir_tabla_tomas_pendientes(df_sheet)))
-        with col_c:
-            st.metric("Columnas detectadas", len(df_sheet.columns))
-
         tarjeta_seccion(
             "Consulta",
             "Búsqueda por clave de laboratorio",
