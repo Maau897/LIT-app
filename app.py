@@ -44,6 +44,112 @@ crear_admin_inicial(
     st.secrets["admin_password"]
 )
 
+
+def aplicar_estilos():
+    st.markdown(
+        """
+        <style>
+        :root {
+            --iner-ink: #16324f;
+            --iner-accent: #1f7a8c;
+            --iner-soft: #e7f4f4;
+            --iner-warm: #f3efe7;
+            --iner-border: rgba(22, 50, 79, 0.12);
+        }
+
+        .block-container {
+            padding-top: 2rem;
+        }
+
+        .iner-hero {
+            background: linear-gradient(135deg, rgba(31,122,140,0.16), rgba(243,239,231,0.9));
+            border: 1px solid var(--iner-border);
+            border-radius: 22px;
+            padding: 1.3rem 1.4rem;
+            margin-bottom: 1rem;
+        }
+
+        .iner-kicker {
+            color: var(--iner-accent);
+            font-size: 0.86rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 0.35rem;
+        }
+
+        .iner-title {
+            color: var(--iner-ink);
+            font-size: 2.1rem;
+            line-height: 1.1;
+            font-weight: 800;
+            margin: 0;
+        }
+
+        .iner-copy {
+            color: rgba(22, 50, 79, 0.82);
+            margin-top: 0.55rem;
+            margin-bottom: 0;
+        }
+
+        .iner-section {
+            background: rgba(255, 255, 255, 0.78);
+            border: 1px solid var(--iner-border);
+            border-radius: 18px;
+            padding: 0.9rem 1rem 0.4rem 1rem;
+            margin: 0.7rem 0 1rem 0;
+        }
+
+        .iner-chip {
+            display: inline-block;
+            background: var(--iner-soft);
+            color: var(--iner-ink);
+            border-radius: 999px;
+            padding: 0.25rem 0.75rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 0.45rem;
+        }
+
+        div[data-testid="stMetric"] {
+            background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(231,244,244,0.92));
+            border: 1px solid var(--iner-border);
+            border-radius: 18px;
+            padding: 0.8rem;
+        }
+
+        div[data-testid="stDataFrame"] {
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        div[data-testid="stDownloadButton"] button {
+            background: linear-gradient(135deg, #1f7a8c, #16324f);
+            color: white;
+            border: none;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def tarjeta_seccion(etiqueta, titulo, descripcion=None):
+    descripcion_html = f'<p class="iner-copy">{descripcion}</p>' if descripcion else ""
+    st.markdown(
+        f"""
+        <div class="iner-section">
+            <div class="iner-chip">{etiqueta}</div>
+            <h3 style="margin:0;color:#16324f;">{titulo}</h3>
+            {descripcion_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+aplicar_estilos()
+
 def pantalla_acceso():
     st.title("Acceso al sistema")
     pestana_login, pestana_registro = st.tabs(["Iniciar sesión", "Crear cuenta"])
@@ -304,8 +410,16 @@ def mostrar_biobanco():
 
 
 def mostrar_proyecto_hospitalario():
-    st.title("Proyecto hospitalario")
-    st.info("Módulo independiente del biobanco. Aquí se muestra información leída desde Google Sheets.")
+    st.markdown(
+        """
+        <div class="iner-hero">
+            <div class="iner-kicker">Proyecto Hospitalario</div>
+            <h1 class="iner-title">Seguimiento hospitalario y tomas pendientes</h1>
+            <p class="iner-copy">Vista operativa del Google Sheet con búsqueda clínica, edición por toma y resúmenes listos para revisión e impresión.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     try:
         df_sheet = leer_sheet_como_dataframe()
@@ -316,7 +430,19 @@ def mostrar_proyecto_hospitalario():
             st.error("La hoja no contiene la columna 'CLAVE DE LABORATORIO'.")
             return
 
-        st.subheader("Búsqueda por clave de laboratorio")
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            st.metric("Pacientes cargados", len(df_sheet))
+        with col_b:
+            st.metric("Tomas pendientes", len(construir_tabla_tomas_pendientes(df_sheet)))
+        with col_c:
+            st.metric("Columnas detectadas", len(df_sheet.columns))
+
+        tarjeta_seccion(
+            "Consulta",
+            "Búsqueda por clave de laboratorio",
+            "Encuentra rápidamente registros clínicos por clave para inspección o seguimiento.",
+        )
         clave_busqueda = st.text_input("Ingresa la clave de laboratorio", placeholder="Ej. VSR_H_001")
 
         if clave_busqueda:
@@ -330,7 +456,11 @@ def mostrar_proyecto_hospitalario():
             else:
                 st.warning("No se encontró ningún paciente con esa clave de laboratorio.")
 
-        st.subheader("Edición dinámica de tomas")
+        tarjeta_seccion(
+            "Edición",
+            "Edición dinámica de tomas",
+            "Carga un paciente por clave y modifica solo las columnas asociadas a la toma seleccionada.",
+        )
 
         clave_edicion = st.text_input(
             "Clave de laboratorio para editar",
@@ -400,21 +530,21 @@ def mostrar_proyecto_hospitalario():
             else:
                 st.warning(f"No se encontraron columnas para {toma_seleccionada}")
 
-        st.subheader("Resumen por diagnóstico")
+        tarjeta_seccion("Resumen", "Distribución por diagnóstico")
 
         if "DIAGNOSTICO_GRUPO" in df_sheet.columns:
             conteo_diag = df_sheet["DIAGNOSTICO_GRUPO"].value_counts().reset_index()
             conteo_diag.columns = ["Diagnóstico agrupado", "Número de pacientes"]
             st.dataframe(conteo_diag, use_container_width=True)
 
-        st.subheader("Resumen por grupo de edad")
+        tarjeta_seccion("Resumen", "Distribución por grupo de edad")
 
         if "GRUPO_EDAD" in df_sheet.columns:
             conteo_edad = df_sheet["GRUPO_EDAD"].value_counts().reset_index()
             conteo_edad.columns = ["Grupo de edad", "Número de pacientes"]
             st.dataframe(conteo_edad, use_container_width=True)
 
-        st.subheader("Subclasificación edad y diagnóstico")
+        tarjeta_seccion("Cruce", "Subclasificación de edad y diagnóstico")
 
         if "GRUPO_EDAD" in df_sheet.columns and "DIAGNOSTICO_GRUPO" in df_sheet.columns:
             tabla_cruzada = pd.crosstab(
@@ -444,7 +574,11 @@ def mostrar_proyecto_hospitalario():
 
             st.dataframe(tabla_cruzada, use_container_width=True)
 
-        st.subheader("Resumen de influenza y coinfecciones en observaciones")
+        tarjeta_seccion(
+            "Vigilancia",
+            "Resumen de influenza y coinfecciones en observaciones",
+            "Detección automática basada en el contenido de observaciones del Google Sheet.",
+        )
 
         if "INFLUENZA_OBS_GRUPO" in df_sheet.columns:
             df_influenza = df_sheet[df_sheet["INFLUENZA_OBS_GRUPO"].notna()]
@@ -456,8 +590,12 @@ def mostrar_proyecto_hospitalario():
             else:
                 st.info("No se encontraron registros de influenza en observaciones.")
 
-        st.subheader("Tomas pendientes del día")
         df_tomas_pendientes = construir_tabla_tomas_pendientes(df_sheet)
+        tarjeta_seccion(
+            "Operación",
+            "Tomas pendientes del día",
+            "Lista operativa con folio, nombre, observaciones, toma pendiente y clave de laboratorio, lista para exportación.",
+        )
 
         if not df_tomas_pendientes.empty:
             st.dataframe(df_tomas_pendientes, use_container_width=True)
@@ -491,10 +629,10 @@ def mostrar_proyecto_hospitalario():
         else:
             st.info("No se encontraron tomas pendientes en columnas de ingreso a LIT.")
 
-        st.subheader("Datos completos del Google Sheet")
+        tarjeta_seccion("Base", "Datos completos del Google Sheet")
         st.dataframe(df_sheet, use_container_width=True)
 
-        st.subheader("Resumen general de pacientes")
+        tarjeta_seccion("Base", "Resumen general de pacientes")
         df_resumen_pacientes = construir_tabla_resumen_pacientes(df_sheet)
         st.dataframe(df_resumen_pacientes, use_container_width=True)
 
