@@ -1,6 +1,7 @@
 ﻿from io import BytesIO
 import pandas as pd
 import streamlit as st
+from openpyxl.utils import get_column_letter
 
 from database import crear_tablas
 from google_sheets import (
@@ -464,6 +465,22 @@ def mostrar_proyecto_hospitalario():
             buffer = BytesIO()
             with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
                 df_tomas_pendientes.to_excel(writer, sheet_name="Tomas pendientes", index=False)
+                worksheet = writer.sheets["Tomas pendientes"]
+
+                for row in worksheet.iter_rows(min_row=2, max_row=worksheet.max_row, min_col=1, max_col=1):
+                    for cell in row:
+                        cell.number_format = "@"
+                        cell.value = str(cell.value) if cell.value is not None else ""
+
+                for col_idx, column_cells in enumerate(worksheet.columns, start=1):
+                    max_length = 0
+
+                    for cell in column_cells:
+                        cell_value = "" if cell.value is None else str(cell.value)
+                        max_length = max(max_length, len(cell_value))
+
+                    adjusted_width = min(max(max_length + 2, 14), 40)
+                    worksheet.column_dimensions[get_column_letter(col_idx)].width = adjusted_width
 
             st.download_button(
                 label="Descargar tomas pendientes en Excel",
