@@ -215,6 +215,356 @@ def dataframe_con_semaforo(df):
     return df.style.map(_color_semaforo, subset=["Semáforo"])
 
 
+def clasificar_vencimiento(fecha, dias_alerta=7):
+    fecha_dt = pd.to_datetime(fecha, errors="coerce")
+    if pd.isna(fecha_dt):
+        return "Sin fecha"
+
+    hoy = pd.Timestamp.today().normalize()
+    delta = (fecha_dt.normalize() - hoy).days
+
+    if delta < 0:
+        return "Vencido"
+    if delta == 0:
+        return "Vence hoy"
+    if delta <= dias_alerta:
+        return "Vence pronto"
+    return "En plazo"
+
+
+def prioridad_desde_alerta(alerta):
+    prioridades = {
+        "Vencido": "Crítica",
+        "Vence hoy": "Alta",
+        "Vence pronto": "Media",
+        "En plazo": "Baja",
+        "Sin fecha": "Baja",
+    }
+    return prioridades.get(alerta, "Baja")
+
+
+def construir_recordatorios_calidad(
+    df_nc,
+    df_acciones,
+    df_auditorias,
+    df_documentos,
+    df_hallazgos=None,
+    df_versiones=None,
+):
+    recordatorios = []
+
+    if not df_nc.empty:
+        for _, fila in df_nc.iterrows():
+            estado_plazo = clasificar_vencimiento(fila.get("Fecha compromiso"), dias_alerta=7)
+            if fila.get("Estado") != "Cerrada" and estado_plazo in ["Vencido", "Vence hoy", "Vence pronto"]:
+                recordatorios.append(
+                    {
+                        "Tipo": "No conformidad",
+                        "Referencia": fila.get("Código"),
+                        "Título": fila.get("Título"),
+                        "Responsable": fila.get("Responsable"),
+                        "Fecha crítica": fila.get("Fecha compromiso"),
+                        "Alerta": estado_plazo,
+                        "Prioridad": prioridad_desde_alerta(estado_plazo),
+                        "Motivo": f"No conformidad {str(fila.get('Severidad', '')).lower()} con compromiso próximo.",
+                    }
+                )
+
+    if not df_acciones.empty:
+        for _, fila in df_acciones.iterrows():
+            estado_plazo = clasificar_vencimiento(fila.get("Fecha compromiso"), dias_alerta=7)
+            if fila.get("Estado") != "Cerrada" and estado_plazo in ["Vencido", "Vence hoy", "Vence pronto"]:
+                recordatorios.append(
+                    {
+                        "Tipo": "Acción",
+                        "Referencia": fila.get("Código NC"),
+                        "Título": fila.get("Título"),
+                        "Responsable": fila.get("Responsable"),
+                        "Fecha crítica": fila.get("Fecha compromiso"),
+                        "Alerta": estado_plazo,
+                        "Prioridad": prioridad_desde_alerta(estado_plazo),
+                        "Motivo": f"Acción {str(fila.get('Tipo', '')).lower()} con fecha compromiso cercana.",
+                    }
+                )
+
+    if not df_auditorias.empty:
+        for _, fila in df_auditorias.iterrows():
+            estado_plazo = clasificar_vencimiento(fila.get("Fecha programada"), dias_alerta=14)
+            if fila.get("Estado") != "Cerrada" and estado_plazo in ["Vencido", "Vence hoy", "Vence pronto"]:
+                recordatorios.append(
+                    {
+                        "Tipo": "Auditoría",
+                        "Referencia": fila.get("Código"),
+                        "Título": fila.get("Título"),
+                        "Responsable": fila.get("Auditor líder"),
+                        "Fecha crítica": fila.get("Fecha programada"),
+                        "Alerta": estado_plazo,
+                        "Prioridad": prioridad_desde_alerta(estado_plazo),
+                        "Motivo": "Auditoría programada pendiente de ejecución o cierre.",
+                    }
+                )
+
+    if not df_documentos.empty:
+        for _, fila in df_documentos.iterrows():
+            estado_plazo = clasificar_vencimiento(fila.get("Vigente hasta"), dias_alerta=30)
+            if fila.get("Estado") == "Vigente" and estado_plazo in ["Vencido", "Vence hoy", "Vence pronto"]:
+                recordatorios.append(
+                    {
+                        "Tipo": "Documento",
+                        "Referencia": fila.get("Código"),
+                        "Título": fila.get("Nombre"),
+                        "Responsable": fila.get("Aprobado por"),
+                        "Fecha crítica": fila.get("Vigente hasta"),
+                        "Alerta": estado_plazo,
+                        "Prioridad": prioridad_desde_alerta(estado_plazo),
+                        "Motivo": "Documento vigente próximo a vencerse u obsoleto.",
+                    }
+                )
+
+    if df_hallazgos is not None and not df_hallazgos.empty:
+        for _, fila in df_hallazgos.iterrows():
+            estado_plazo = clasificar_vencimiento(fila.get("Fecha compromiso"), dias_alerta=7)
+            if fila.get("Estado") != "Cerrado" and estado_plazo in ["Vencido", "Vence hoy", "Vence pronto"]:
+                recordatorios.append(
+                    {
+                        "Tipo": "Hallazgo",
+                        "Referencia": fila.get("Referencia"),
+                        "Título": fila.get("Descripción"),
+                        "Responsable": fila.get("Responsable"),
+                        "Fecha crítica": fila.get("Fecha compromiso"),
+                        "Alerta": estado_plazo,
+                        "Prioridad": prioridad_desde_alerta(estado_plazo),
+                        "Motivo": f"Hallazgo de auditoría {str(fila.get('Severidad', '')).lower()} con seguimiento pendiente.",
+                    }
+                )
+
+    if df_versiones is not None and not df_versiones.empty:
+        versiones_pendientes = df_versiones[
+            df_versiones["Aprobado por"].isna() | (df_versiones["Aprobado por"].astype(str).str.strip() == "")
+        ]
+        for _, fila in versiones_pendientes.iterrows():
+            recordatorios.append(
+                {
+                    "Tipo": "Versión documental",
+                    "Referencia": fila.get("Código"),
+                    "Título": fila.get("Nombre"),
+                    "Responsable": fila.get("Elaborado por"),
+                    "Fecha crítica": fila.get("Registrada el"),
+                    "Alerta": "Vence hoy",
+                    "Prioridad": "Alta",
+                    "Motivo": f"La versión {fila.get('Versión')} sigue pendiente de aprobación formal.",
+                }
+            )
+
+    if not recordatorios:
+        return pd.DataFrame(
+            columns=["Tipo", "Referencia", "Título", "Responsable", "Fecha crítica", "Alerta", "Prioridad", "Motivo"]
+        )
+
+    df_recordatorios = pd.DataFrame(recordatorios)
+    prioridad_alerta = {"Vencido": 0, "Vence hoy": 1, "Vence pronto": 2, "En plazo": 3, "Sin fecha": 4}
+    prioridad_negocio = {"Crítica": 0, "Alta": 1, "Media": 2, "Baja": 3}
+    df_recordatorios["orden_alerta"] = df_recordatorios["Alerta"].map(prioridad_alerta).fillna(99)
+    df_recordatorios["orden_prioridad"] = df_recordatorios["Prioridad"].map(prioridad_negocio).fillna(99)
+    df_recordatorios["Fecha_sort"] = pd.to_datetime(df_recordatorios["Fecha crítica"], errors="coerce")
+    df_recordatorios = df_recordatorios.sort_values(
+        by=["orden_prioridad", "orden_alerta", "Fecha_sort", "Tipo"]
+    ).drop(columns=["orden_alerta", "orden_prioridad", "Fecha_sort"])
+    return df_recordatorios
+
+
+def construir_pendientes_prioritarios(
+    df_nc,
+    df_acciones,
+    df_documentos,
+    df_auditorias=None,
+    df_hallazgos=None,
+    df_versiones=None,
+):
+    pendientes = []
+
+    if not df_nc.empty:
+        pendientes_nc = df_nc[
+            (df_nc["Estado"] != "Cerrada")
+            & (df_nc["Severidad"].isin(["Alta", "Crítica"]))
+        ]
+        for _, fila in pendientes_nc.iterrows():
+            pendientes.append(
+                {
+                    "Categoría": "NC crítica",
+                    "Referencia": fila["Código"],
+                    "Detalle": fila["Título"],
+                    "Responsable": fila["Responsable"],
+                    "Estado": fila["Estado"],
+                    "Fecha crítica": fila["Fecha compromiso"],
+                    "Prioridad": "Crítica" if fila["Severidad"] == "Crítica" else "Alta",
+                    "Motivo": "No conformidad abierta de severidad alta o crítica.",
+                }
+            )
+
+        pendientes_aprobacion_nc = df_nc[
+            (df_nc["Fecha cierre"].notna())
+            & (df_nc["Aprobado por"].isna() | (df_nc["Aprobado por"].astype(str).str.strip() == ""))
+        ]
+        for _, fila in pendientes_aprobacion_nc.iterrows():
+            pendientes.append(
+                {
+                    "Categoría": "NC pendiente de aprobación",
+                    "Referencia": fila["Código"],
+                    "Detalle": fila["Título"],
+                    "Responsable": fila["Responsable"],
+                    "Estado": fila["Estado"],
+                    "Fecha crítica": fila["Fecha cierre"],
+                    "Prioridad": "Alta",
+                    "Motivo": "La no conformidad tiene cierre registrado pero falta aprobación formal.",
+                }
+            )
+
+    if not df_acciones.empty:
+        acciones_vencidas = df_acciones[
+            (df_acciones["Estado"] != "Cerrada")
+            & (pd.to_datetime(df_acciones["Fecha compromiso"], errors="coerce") < pd.Timestamp.today().normalize())
+        ]
+        for _, fila in acciones_vencidas.iterrows():
+            pendientes.append(
+                {
+                    "Categoría": "Acción vencida",
+                    "Referencia": fila["Título"],
+                    "Detalle": fila["Código NC"],
+                    "Responsable": fila["Responsable"],
+                    "Estado": fila["Estado"],
+                    "Fecha crítica": fila["Fecha compromiso"],
+                    "Prioridad": "Crítica",
+                    "Motivo": "La acción correctiva o preventiva ya está fuera de plazo.",
+                }
+            )
+
+        pendientes_aprobacion_acc = df_acciones[
+            (df_acciones["Fecha cierre"].notna())
+            & (df_acciones["Aprobado por"].isna() | (df_acciones["Aprobado por"].astype(str).str.strip() == ""))
+        ]
+        for _, fila in pendientes_aprobacion_acc.iterrows():
+            pendientes.append(
+                {
+                    "Categoría": "Acción pendiente de cierre",
+                    "Referencia": fila["Título"],
+                    "Detalle": fila["Código NC"],
+                    "Responsable": fila["Responsable"],
+                    "Estado": fila["Estado"],
+                    "Fecha crítica": fila["Fecha cierre"],
+                    "Prioridad": "Alta",
+                    "Motivo": "La acción ya reportó cierre pero todavía no cuenta con aprobación formal.",
+                }
+            )
+
+    if not df_documentos.empty:
+        docs_borrador = df_documentos[df_documentos["Estado"] == "Borrador"]
+        for _, fila in docs_borrador.iterrows():
+            pendientes.append(
+                {
+                    "Categoría": "Documento borrador",
+                    "Referencia": fila["Código"],
+                    "Detalle": fila["Nombre"],
+                    "Responsable": fila["Aprobado por"],
+                    "Estado": fila["Estado"],
+                    "Fecha crítica": fila["Vigente desde"],
+                    "Prioridad": "Media",
+                    "Motivo": "Documento pendiente de formalizar y liberar como vigente.",
+                }
+            )
+
+        docs_vencidos = df_documentos[
+            (df_documentos["Estado"] == "Vigente")
+            & (pd.to_datetime(df_documentos["Vigente hasta"], errors="coerce") < pd.Timestamp.today().normalize())
+        ]
+        for _, fila in docs_vencidos.iterrows():
+            pendientes.append(
+                {
+                    "Categoría": "Documento vencido",
+                    "Referencia": fila["Código"],
+                    "Detalle": fila["Nombre"],
+                    "Responsable": fila["Aprobado por"],
+                    "Estado": fila["Estado"],
+                    "Fecha crítica": fila["Vigente hasta"],
+                    "Prioridad": "Alta",
+                    "Motivo": "Documento vigente fuera de fecha de vigencia.",
+                }
+            )
+
+    if df_auditorias is not None and not df_auditorias.empty:
+        auditorias_proximas = df_auditorias[
+            (df_auditorias["Estado"] != "Cerrada")
+            & (
+                pd.to_datetime(df_auditorias["Fecha programada"], errors="coerce")
+                <= (pd.Timestamp.today().normalize() + pd.Timedelta(days=14))
+            )
+        ]
+        for _, fila in auditorias_proximas.iterrows():
+            pendientes.append(
+                {
+                    "Categoría": "Auditoría prioritaria",
+                    "Referencia": fila["Código"],
+                    "Detalle": fila["Título"],
+                    "Responsable": fila["Auditor líder"],
+                    "Estado": fila["Estado"],
+                    "Fecha crítica": fila["Fecha programada"],
+                    "Prioridad": "Alta" if clasificar_vencimiento(fila["Fecha programada"], 14) in ["Vencido", "Vence hoy"] else "Media",
+                    "Motivo": "Auditoría próxima que requiere preparación o cierre.",
+                }
+            )
+
+    if df_hallazgos is not None and not df_hallazgos.empty:
+        hallazgos_prioritarios = df_hallazgos[
+            (df_hallazgos["Estado"] != "Cerrado")
+            & (df_hallazgos["Severidad"].isin(["Alta", "Crítica"]))
+        ]
+        for _, fila in hallazgos_prioritarios.iterrows():
+            pendientes.append(
+                {
+                    "Categoría": "Hallazgo prioritario",
+                    "Referencia": fila["Referencia"],
+                    "Detalle": fila["Descripción"],
+                    "Responsable": fila["Responsable"],
+                    "Estado": fila["Estado"],
+                    "Fecha crítica": fila["Fecha compromiso"],
+                    "Prioridad": "Crítica" if fila["Severidad"] == "Crítica" else "Alta",
+                    "Motivo": "Hallazgo de auditoría de severidad alta o crítica aún abierto.",
+                }
+            )
+
+    if df_versiones is not None and not df_versiones.empty:
+        versiones_pendientes = df_versiones[
+            df_versiones["Aprobado por"].isna() | (df_versiones["Aprobado por"].astype(str).str.strip() == "")
+        ]
+        for _, fila in versiones_pendientes.iterrows():
+            pendientes.append(
+                {
+                    "Categoría": "Versión pendiente",
+                    "Referencia": fila["Código"],
+                    "Detalle": f"{fila['Nombre']} v{fila['Versión']}",
+                    "Responsable": fila["Elaborado por"],
+                    "Estado": "Pendiente",
+                    "Fecha crítica": fila["Registrada el"],
+                    "Prioridad": "Alta",
+                    "Motivo": "Versión documental pendiente de aprobación.",
+                }
+            )
+
+    if not pendientes:
+        return pd.DataFrame(
+            columns=["Categoría", "Referencia", "Detalle", "Responsable", "Estado", "Fecha crítica", "Prioridad", "Motivo"]
+        )
+
+    df_pendientes = pd.DataFrame(pendientes)
+    orden_prioridad = {"Crítica": 0, "Alta": 1, "Media": 2, "Baja": 3}
+    df_pendientes["orden_prioridad"] = df_pendientes["Prioridad"].map(orden_prioridad).fillna(99)
+    df_pendientes["fecha_sort"] = pd.to_datetime(df_pendientes["Fecha crítica"], errors="coerce")
+    df_pendientes = df_pendientes.sort_values(by=["orden_prioridad", "fecha_sort", "Categoría"]).drop(
+        columns=["orden_prioridad", "fecha_sort"]
+    )
+    return df_pendientes
+
+
 def generar_excel_ejecutivo(secciones):
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
@@ -1621,8 +1971,15 @@ def mostrar_calidad():
 
         no_conformidades = listar_no_conformidades()
         acciones = listar_acciones_calidad()
+        auditorias = listar_auditorias_calidad()
+        hallazgos = listar_hallazgos_auditoria()
+        documentos = listar_documentos_calidad()
         df_nc_exec = pd.DataFrame()
         df_acc_exec = pd.DataFrame()
+        df_aud_exec = pd.DataFrame()
+        df_hall_exec = pd.DataFrame()
+        df_docs_exec = pd.DataFrame()
+        df_versiones_exec = pd.DataFrame()
 
         if no_conformidades:
             df_nc_exec = pd.DataFrame(
@@ -1652,8 +2009,57 @@ def mostrar_calidad():
             )
             df_acc_exec["Fecha compromiso"] = pd.to_datetime(df_acc_exec["Fecha compromiso"], errors="coerce")
 
+        if auditorias:
+            df_aud_exec = pd.DataFrame(
+                auditorias,
+                columns=[
+                    "ID auditoría", "Código", "Título", "Área", "Auditor líder",
+                    "Fecha programada", "Estado", "Resultado",
+                ],
+            )
+
+        if hallazgos:
+            df_hall_exec = pd.DataFrame(
+                hallazgos,
+                columns=[
+                    "ID hallazgo", "ID auditoría", "Código auditoría", "Referencia",
+                    "Descripción", "Severidad", "Estado", "Responsable", "Fecha compromiso",
+                ],
+            )
+
+        if documentos:
+            df_docs_exec = pd.DataFrame(
+                documentos,
+                columns=[
+                    "ID", "Código", "Nombre", "Proceso/Área", "Tipo",
+                    "Estado", "Versión actual", "Vigente desde", "Vigente hasta",
+                    "Aprobado por", "Fecha aprobación", "Observaciones",
+                ],
+            )
+
+            versiones_tablero = []
+            for id_documento, codigo, nombre, *_ in documentos:
+                for id_version, version, _, _, _, elaborado_por, aprobado_por, fecha_aprobacion, es_vigente, created_at in listar_versiones_documento(id_documento):
+                    versiones_tablero.append(
+                        {
+                            "ID documento": id_documento,
+                            "Código": codigo,
+                            "Nombre": nombre,
+                            "ID versión": id_version,
+                            "Versión": version,
+                            "Elaborado por": elaborado_por,
+                            "Aprobado por": aprobado_por,
+                            "Fecha aprobación": fecha_aprobacion,
+                            "Vigente": "Sí" if es_vigente else "No",
+                            "Registrada el": created_at,
+                        }
+                    )
+
+            if versiones_tablero:
+                df_versiones_exec = pd.DataFrame(versiones_tablero)
+
         st.write("### Alertas operativas")
-        alerta_col1, alerta_col2, alerta_col3 = st.columns(3)
+        alerta_col1, alerta_col2, alerta_col3, alerta_col4 = st.columns(4)
 
         acciones_vencidas = (
             df_acc_exec[
@@ -1673,7 +2079,35 @@ def mostrar_calidad():
             else pd.DataFrame()
         )
         auditorias_pendientes = (
-            len([fila for fila in listar_auditorias_calidad() if fila[6] != "Cerrada"])
+            len([fila for fila in auditorias if fila[6] != "Cerrada"])
+        )
+        documentos_por_vencer = (
+            df_docs_exec[
+                (df_docs_exec["Estado"] == "Vigente")
+                & (pd.to_datetime(df_docs_exec["Vigente hasta"], errors="coerce").notna())
+                & (
+                    pd.to_datetime(df_docs_exec["Vigente hasta"], errors="coerce")
+                    <= (pd.Timestamp.today().normalize() + pd.Timedelta(days=30))
+                )
+            ]
+            if not df_docs_exec.empty
+            else pd.DataFrame()
+        )
+        recordatorios_calidad = construir_recordatorios_calidad(
+            df_nc_exec,
+            df_acc_exec,
+            df_aud_exec,
+            df_docs_exec,
+            df_hall_exec,
+            df_versiones_exec,
+        )
+        pendientes_prioritarios = construir_pendientes_prioritarios(
+            df_nc_exec,
+            df_acc_exec,
+            df_docs_exec,
+            df_aud_exec,
+            df_hall_exec,
+            df_versiones_exec,
         )
 
         with alerta_col1:
@@ -1693,6 +2127,99 @@ def mostrar_calidad():
                 st.info(f"{auditorias_pendientes} auditorías siguen programadas o en ejecución.")
             else:
                 st.success("No hay auditorías pendientes.")
+
+        with alerta_col4:
+            if not documentos_por_vencer.empty:
+                st.warning(f"{len(documentos_por_vencer)} documentos están por vencer en los próximos 30 días.")
+            else:
+                st.success("No hay documentos próximos a vencerse.")
+
+        tarjeta_seccion(
+            "Prioridad",
+            "Panel de pendientes prioritarios",
+            "Consolida cierres pendientes, vencimientos, hallazgos críticos y aprobaciones documentales en una sola vista.",
+        )
+
+        if not pendientes_prioritarios.empty:
+            prioridad_col1, prioridad_col2, prioridad_col3 = st.columns(3)
+            with prioridad_col1:
+                st.metric("Pendientes prioritarios", len(pendientes_prioritarios))
+            with prioridad_col2:
+                st.metric(
+                    "Pendientes críticos",
+                    len(pendientes_prioritarios[pendientes_prioritarios["Prioridad"] == "Crítica"]),
+                )
+            with prioridad_col3:
+                st.metric(
+                    "Pendientes altos",
+                    len(pendientes_prioritarios[pendientes_prioritarios["Prioridad"] == "Alta"]),
+                )
+
+            filtro_prioridad = st.multiselect(
+                "Filtrar panel por prioridad",
+                ["Crítica", "Alta", "Media", "Baja"],
+                default=["Crítica", "Alta", "Media"],
+                key="filtro_prioridad_pendientes",
+            )
+            pendientes_visibles = pendientes_prioritarios[
+                pendientes_prioritarios["Prioridad"].isin(filtro_prioridad)
+            ] if filtro_prioridad else pendientes_prioritarios
+            st.dataframe(pendientes_visibles, use_container_width=True, hide_index=True)
+        else:
+            pendientes_visibles = pendientes_prioritarios
+            st.success("No hay pendientes prioritarios acumulados en este momento.")
+
+        tarjeta_seccion(
+            "Fechas",
+            "Recordatorios por fechas críticas",
+            "Resume próximos vencimientos y elementos fuera de plazo para que el equipo actúe antes del cierre.",
+        )
+
+        if not recordatorios_calidad.empty:
+            recordatorio_col1, recordatorio_col2 = st.columns(2)
+            with recordatorio_col1:
+                filtro_tipo_recordatorio = st.multiselect(
+                    "Tipos de recordatorio",
+                    sorted(recordatorios_calidad["Tipo"].dropna().unique().tolist()),
+                    default=sorted(recordatorios_calidad["Tipo"].dropna().unique().tolist()),
+                    key="filtro_tipo_recordatorio",
+                )
+            with recordatorio_col2:
+                filtro_alerta_recordatorio = st.multiselect(
+                    "Estado de alerta",
+                    ["Vencido", "Vence hoy", "Vence pronto"],
+                    default=["Vencido", "Vence hoy", "Vence pronto"],
+                    key="filtro_alerta_recordatorio",
+                )
+
+            recordatorios_visibles = recordatorios_calidad.copy()
+            if filtro_tipo_recordatorio:
+                recordatorios_visibles = recordatorios_visibles[
+                    recordatorios_visibles["Tipo"].isin(filtro_tipo_recordatorio)
+                ]
+            if filtro_alerta_recordatorio:
+                recordatorios_visibles = recordatorios_visibles[
+                    recordatorios_visibles["Alerta"].isin(filtro_alerta_recordatorio)
+                ]
+
+            col_recordatorio_1, col_recordatorio_2, col_recordatorio_3 = st.columns(3)
+            with col_recordatorio_1:
+                st.metric("Recordatorios activos", len(recordatorios_visibles))
+            with col_recordatorio_2:
+                st.metric(
+                    "Vencidos",
+                    len(recordatorios_visibles[recordatorios_visibles["Alerta"] == "Vencido"]),
+                )
+            with col_recordatorio_3:
+                st.metric(
+                    "Vence hoy",
+                    len(recordatorios_visibles[recordatorios_visibles["Alerta"] == "Vence hoy"]),
+                )
+
+            st.dataframe(recordatorios_visibles, use_container_width=True, hide_index=True)
+        else:
+            recordatorios_visibles = recordatorios_calidad
+            st.success("No hay recordatorios activos por fechas críticas.")
 
         tarjeta_seccion(
             "Filtros",
@@ -1817,6 +2344,8 @@ def mostrar_calidad():
             f"Acciones visibles en tablero: {len(df_acc_exec_filtrado)}",
             f"Acciones vencidas visibles: {len(acciones_vencidas)}",
             f"No conformidades altas o críticas visibles: {len(prioridades_nc)}",
+            f"Pendientes prioritarios activos: {len(pendientes_visibles)}",
+            f"Recordatorios por fechas críticas activos: {len(recordatorios_visibles)}",
         ]
 
         secciones_exportables = {
@@ -1824,6 +2353,8 @@ def mostrar_calidad():
             "Acciones": df_acc_exec_filtrado,
             "Acciones vencidas": acciones_vencidas,
             "Prioridades NC": prioridades_nc,
+            "Pendientes prioritarios": pendientes_visibles,
+            "Recordatorios críticos": recordatorios_visibles,
         }
 
         export_col1, export_col2 = st.columns(2)
