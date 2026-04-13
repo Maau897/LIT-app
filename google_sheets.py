@@ -245,9 +245,14 @@ def _es_columna_folio_lab_clinico(nombre_columna):
     nombre = _normalizar_nombre_columna(nombre_columna)
     toma = _extraer_toma_de_columna(nombre)
 
+    if toma is None:
+        return False
+
+    if nombre == f"T{toma}":
+        return True
+
     return (
-        toma is not None
-        and "FOLIO" in nombre
+        "FOLIO" in nombre
         and "LAB" in nombre
         and "CLIN" in nombre
     )
