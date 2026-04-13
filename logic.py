@@ -687,6 +687,18 @@ def registrar_no_conformidad(datos):
         datos.get("causa_raiz"),
     ))
 
+    id_no_conformidad = cursor.lastrowid
+
+    if datos.get("usuario_email"):
+        _registrar_evento_calidad_cursor(
+            cursor,
+            entidad_tipo="no_conformidad",
+            entidad_id=id_no_conformidad,
+            accion="Creación",
+            detalle=f"Se registró la no conformidad {datos['codigo']} con estado inicial {datos.get('estado', 'Abierta')}.",
+            usuario_email=datos["usuario_email"],
+        )
+
     conn.commit()
     conn.close()
 
@@ -711,6 +723,18 @@ def registrar_accion_calidad(datos):
         datos["fecha_inicio"],
         datos.get("fecha_compromiso"),
     ))
+
+    id_accion = cursor.lastrowid
+
+    if datos.get("usuario_email"):
+        _registrar_evento_calidad_cursor(
+            cursor,
+            entidad_tipo="accion",
+            entidad_id=id_accion,
+            accion="Creación",
+            detalle=f"Se registró la acción '{datos['titulo']}' con estado inicial {datos.get('estado', 'Abierta')}.",
+            usuario_email=datos["usuario_email"],
+        )
 
     conn.commit()
     conn.close()
@@ -805,12 +829,52 @@ def contar_acciones_vencidas():
     return total
 
 
+def _registrar_evento_calidad_cursor(
+    cursor,
+    *,
+    entidad_tipo: str,
+    entidad_id: int | None,
+    accion: str,
+    detalle: str,
+    usuario_email: str,
+):
+    cursor.execute("""
+        INSERT INTO calidad_bitacora (
+            entidad_tipo, entidad_id, accion, detalle, usuario_email
+        )
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        entidad_tipo,
+        entidad_id,
+        accion,
+        detalle,
+        usuario_email,
+    ))
+
+
+def listar_bitacora_calidad(limit: int = 200):
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT id_evento, entidad_tipo, entidad_id, accion, detalle, usuario_email, created_at
+        FROM calidad_bitacora
+        ORDER BY datetime(created_at) DESC, id_evento DESC
+        LIMIT ?
+    """, (limit,))
+
+    resultados = cursor.fetchall()
+    conn.close()
+    return resultados
+
+
 def actualizar_estado_no_conformidad(
     id_no_conformidad: int,
     nuevo_estado: str,
     causa_raiz: str | None = None,
     verificacion_cierre: str | None = None,
     es_admin: bool = False,
+    usuario_email: str | None = None,
 ):
     if nuevo_estado == "Cerrada" and not es_admin:
         raise PermissionError("Solo un administrador puede cerrar una no conformidad.")
@@ -839,6 +903,19 @@ def actualizar_estado_no_conformidad(
         id_no_conformidad,
     ))
 
+    if usuario_email:
+        detalle = f"Se actualizó el estado de la no conformidad a {nuevo_estado}."
+        if verificacion_cierre and nuevo_estado == "Cerrada":
+            detalle += " Se registró verificación de cierre."
+        _registrar_evento_calidad_cursor(
+            cursor,
+            entidad_tipo="no_conformidad",
+            entidad_id=id_no_conformidad,
+            accion="Cambio de estado",
+            detalle=detalle,
+            usuario_email=usuario_email,
+        )
+
     conn.commit()
     conn.close()
 
@@ -847,6 +924,7 @@ def actualizar_estado_accion_calidad(
     id_accion: int,
     nuevo_estado: str,
     verificacion_eficacia: str | None = None,
+    usuario_email: str | None = None,
 ):
     conn = conectar_db()
     cursor = conn.cursor()
@@ -869,6 +947,19 @@ def actualizar_estado_accion_calidad(
         fecha_cierre,
         id_accion,
     ))
+
+    if usuario_email:
+        detalle = f"Se actualizó el estado de la acción a {nuevo_estado}."
+        if verificacion_eficacia and nuevo_estado == "Cerrada":
+            detalle += " Se registró verificación de eficacia."
+        _registrar_evento_calidad_cursor(
+            cursor,
+            entidad_tipo="accion",
+            entidad_id=id_accion,
+            accion="Cambio de estado",
+            detalle=detalle,
+            usuario_email=usuario_email,
+        )
 
     conn.commit()
     conn.close()
@@ -906,6 +997,15 @@ def guardar_evidencia_calidad(
         descripcion,
         subido_por,
     ))
+
+    _registrar_evento_calidad_cursor(
+        cursor,
+        entidad_tipo=tipo_entidad,
+        entidad_id=id_entidad,
+        accion="Carga de evidencia",
+        detalle=f"Se adjuntó el archivo '{nombre_archivo_original}'.",
+        usuario_email=subido_por,
+    )
 
     conn.commit()
     conn.close()
@@ -949,6 +1049,18 @@ def registrar_auditoria_calidad(datos):
         datos.get("resultado"),
     ))
 
+    id_auditoria = cursor.lastrowid
+
+    if datos.get("usuario_email"):
+        _registrar_evento_calidad_cursor(
+            cursor,
+            entidad_tipo="auditoria",
+            entidad_id=id_auditoria,
+            accion="Creación",
+            detalle=f"Se programó la auditoría {datos['codigo']} con estado {datos.get('estado', 'Programada')}.",
+            usuario_email=datos["usuario_email"],
+        )
+
     conn.commit()
     conn.close()
 
@@ -989,6 +1101,18 @@ def registrar_hallazgo_auditoria(datos):
         datos.get("responsable"),
         datos.get("fecha_compromiso"),
     ))
+
+    id_hallazgo = cursor.lastrowid
+
+    if datos.get("usuario_email"):
+        _registrar_evento_calidad_cursor(
+            cursor,
+            entidad_tipo="hallazgo_auditoria",
+            entidad_id=id_hallazgo,
+            accion="Creación",
+            detalle=f"Se registró el hallazgo '{datos['referencia']}' con estado {datos.get('estado', 'Abierto')}.",
+            usuario_email=datos["usuario_email"],
+        )
 
     conn.commit()
     conn.close()

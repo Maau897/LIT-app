@@ -31,6 +31,7 @@ from logic import (
     guardar_evidencia_calidad,
     listar_auditorias_calidad,
     listar_acciones_calidad,
+    listar_bitacora_calidad,
     listar_evidencias_calidad,
     listar_hallazgos_auditoria,
     listar_no_conformidades,
@@ -709,6 +710,7 @@ def mostrar_calidad():
                 "fecha_deteccion": str(fecha_deteccion),
                 "fecha_compromiso": str(fecha_compromiso),
                 "causa_raiz": causa_raiz.strip(),
+                "usuario_email": st.session_state.get("usuario_email", ""),
             }
 
             campos_requeridos = [
@@ -773,6 +775,7 @@ def mostrar_calidad():
                         causa_raiz=causa_raiz_update.strip() or None,
                         verificacion_cierre=verificacion_cierre.strip() or None,
                         es_admin=st.session_state.get("es_admin", False),
+                        usuario_email=st.session_state.get("usuario_email", ""),
                     )
                     st.success("Estado de no conformidad actualizado.")
                     st.rerun()
@@ -874,6 +877,7 @@ def mostrar_calidad():
                     "responsable": responsable_accion.strip(),
                     "fecha_inicio": str(fecha_inicio),
                     "fecha_compromiso": str(fecha_compromiso_accion),
+                    "usuario_email": st.session_state.get("usuario_email", ""),
                 }
 
                 campos_requeridos = ["titulo", "descripcion", "responsable"]
@@ -926,6 +930,7 @@ def mostrar_calidad():
                         id_accion=opciones_accion[seleccion_accion],
                         nuevo_estado=nuevo_estado_accion,
                         verificacion_eficacia=verificacion_eficacia.strip() or None,
+                        usuario_email=st.session_state.get("usuario_email", ""),
                     )
                     st.success("Acción actualizada correctamente.")
                     st.rerun()
@@ -1000,6 +1005,7 @@ def mostrar_calidad():
                 "alcance": alcance_auditoria.strip(),
                 "criterios": criterios_auditoria.strip(),
                 "estado": estado_auditoria,
+                "usuario_email": st.session_state.get("usuario_email", ""),
             }
 
             campos_requeridos = ["codigo", "titulo", "area", "auditor_lider"]
@@ -1059,6 +1065,7 @@ def mostrar_calidad():
                     "estado": estado_hallazgo,
                     "responsable": responsable_hallazgo.strip(),
                     "fecha_compromiso": str(fecha_compromiso_hallazgo),
+                    "usuario_email": st.session_state.get("usuario_email", ""),
                 }
 
                 if not datos_hallazgo["referencia"] or not datos_hallazgo["descripcion"]:
@@ -1142,6 +1149,22 @@ def mostrar_calidad():
                         st.caption(f"{descripcion} | {subido_por} | {created_at}")
                 except FileNotFoundError:
                     st.warning(f"No se encontró el archivo {nombre_archivo} en la ruta almacenada.")
+
+        tarjeta_seccion(
+            "Bitácora",
+            "Trazabilidad de cambios",
+            "Registro cronológico de altas, cambios de estado, evidencias y eventos de auditoría.",
+        )
+
+        bitacora = listar_bitacora_calidad()
+        if bitacora:
+            df_bitacora = pd.DataFrame(
+                bitacora,
+                columns=["ID", "Entidad", "ID entidad", "Acción", "Detalle", "Usuario", "Fecha"],
+            )
+            st.dataframe(df_bitacora, use_container_width=True, hide_index=True)
+        else:
+            st.info("Todavía no hay eventos registrados en la bitácora.")
 
 
 st.sidebar.title("Navegación")
