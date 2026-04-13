@@ -10,6 +10,13 @@ def conectar_db():
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
+
+def asegurar_columna(cursor, tabla, columna, definicion):
+    cursor.execute(f"PRAGMA table_info({tabla})")
+    columnas = {fila[1] for fila in cursor.fetchall()}
+    if columna not in columnas:
+        cursor.execute(f"ALTER TABLE {tabla} ADD COLUMN {columna} {definicion}")
+
 def crear_tablas():
     EVIDENCIAS_DIR.mkdir(exist_ok=True)
     conn = conectar_db()
@@ -117,6 +124,9 @@ def crear_tablas():
         causa_raiz TEXT,
         verificacion_cierre TEXT,
         fecha_cierre TEXT,
+        aprobado_por TEXT,
+        fecha_aprobacion TEXT,
+        comentario_final TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
     """)
@@ -134,6 +144,9 @@ def crear_tablas():
         fecha_compromiso TEXT,
         fecha_cierre TEXT,
         verificacion_eficacia TEXT,
+        aprobado_por TEXT,
+        fecha_aprobacion TEXT,
+        comentario_final TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (id_no_conformidad) REFERENCES calidad_no_conformidades(id_no_conformidad)
     )
@@ -194,6 +207,13 @@ def crear_tablas():
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
     """)
+
+    asegurar_columna(cursor, "calidad_no_conformidades", "aprobado_por", "TEXT")
+    asegurar_columna(cursor, "calidad_no_conformidades", "fecha_aprobacion", "TEXT")
+    asegurar_columna(cursor, "calidad_no_conformidades", "comentario_final", "TEXT")
+    asegurar_columna(cursor, "calidad_acciones", "aprobado_por", "TEXT")
+    asegurar_columna(cursor, "calidad_acciones", "fecha_aprobacion", "TEXT")
+    asegurar_columna(cursor, "calidad_acciones", "comentario_final", "TEXT")
 
     conn.commit()
     conn.close()
