@@ -251,10 +251,18 @@ def _es_columna_folio_lab_clinico(nombre_columna):
     if nombre == f"T{toma}":
         return True
 
+    if any(palabra in nombre for palabra in ("INGRESO", "FECHA")):
+        return False
+
+    if nombre.endswith("LIT") or nombre == f"T{toma} LIT":
+        return False
+
     return (
         "FOLIO" in nombre
-        and "LAB" in nombre
-        and "CLIN" in nombre
+        or "LAB CLIN" in nombre
+        or "LAB CLINICO" in nombre
+        or nombre.endswith(" LC")
+        or f"T{toma} LC" in nombre
     )
 
 
