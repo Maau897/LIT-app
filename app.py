@@ -168,6 +168,111 @@ def tarjeta_seccion(etiqueta, titulo, descripcion=None):
 
 aplicar_estilos()
 
+
+def semaforo_no_conformidad(estado, severidad):
+    if estado == "Cerrada":
+        return "Verde"
+    if severidad in ["Crítica", "Alta"]:
+        return "Rojo"
+    if estado == "En proceso" or severidad == "Media":
+        return "Amarillo"
+    return "Verde"
+
+
+def semaforo_accion(estado, fecha_compromiso):
+    if estado == "Cerrada":
+        return "Verde"
+
+    fecha = pd.to_datetime(fecha_compromiso, errors="coerce")
+    hoy = pd.Timestamp.today().normalize()
+
+    if pd.notna(fecha) and fecha < hoy:
+        return "Rojo"
+    if estado == "En proceso":
+        return "Amarillo"
+    return "Verde"
+
+
+def _color_semaforo(valor):
+    colores = {
+        "Rojo": "background-color: #f8d7da; color: #8a1c1c;",
+        "Amarillo": "background-color: #fff3cd; color: #7a5d00;",
+        "Verde": "background-color: #d1e7dd; color: #0f5132;",
+    }
+    return colores.get(valor, "")
+
+
+def dataframe_con_semaforo(df):
+    if df.empty or "Semáforo" not in df.columns:
+        return df
+    return df.style.map(_color_semaforo, subset=["Semáforo"])
+
+
+def generar_excel_ejecutivo(secciones):
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        for nombre, dataframe in secciones.items():
+            if dataframe is None:
+                continue
+            df = dataframe.copy()
+            hoja = nombre[:31]
+            df.to_excel(writer, sheet_name=hoja, index=False)
+            worksheet = writer.sheets[hoja]
+            for col_idx, column_cells in enumerate(worksheet.columns, start=1):
+                max_length = 0
+                for cell in column_cells:
+                    cell_value = "" if cell.value is None else str(cell.value)
+                    max_length = max(max_length, len(cell_value))
+                worksheet.column_dimensions[get_column_letter(col_idx)].width = min(max(max_length + 2, 14), 40)
+    return buffer.getvalue()
+
+
+def generar_pdf_ejecutivo(resumen_lineas, secciones):
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    except ImportError as exc:
+        raise RuntimeError("Instala reportlab para exportar a PDF.") from exc
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    styles = getSampleStyleSheet()
+    elementos = [Paragraph("Reporte ejecutivo de calidad", styles["Title"]), Spacer(1, 12)]
+
+    for linea in resumen_lineas:
+        elementos.append(Paragraph(linea, styles["BodyText"]))
+        elementos.append(Spacer(1, 6))
+
+    for nombre, dataframe in secciones.items():
+        elementos.append(Spacer(1, 10))
+        elementos.append(Paragraph(nombre, styles["Heading2"]))
+        df = dataframe.copy()
+        if df.empty:
+            elementos.append(Paragraph("Sin datos en esta sección.", styles["BodyText"]))
+            continue
+
+        df = df.head(15)
+        tabla_data = [df.columns.tolist()] + df.fillna("").astype(str).values.tolist()
+        tabla = Table(tabla_data, repeatRows=1)
+        tabla.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d9edf2")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#16324f")),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d4de")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fbfc")]),
+                ]
+            )
+        )
+        elementos.append(tabla)
+
+    doc.build(elementos)
+    return buffer.getvalue()
+
 def pantalla_acceso():
     st.title("Acceso al sistema")
     pestana_login, pestana_registro = st.tabs(["Iniciar sesión", "Crear cuenta"])
@@ -1266,89 +1371,8 @@ def mostrar_calidad():
 
         no_conformidades = listar_no_conformidades()
         acciones = listar_acciones_calidad()
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            if no_conformidades:
-                df_nc = pd.DataFrame(
-                    no_conformidades,
-                    columns=[
-                        "ID", "Código", "Título", "Descripción", "Origen", "Área", "Severidad",
-                        "Estado", "Detectado por", "Responsable", "Fecha detección",
-                        "Fecha compromiso", "Causa raíz", "Fecha cierre",
-                    ],
-                )
-                st.write("### Distribución por severidad")
-                st.bar_chart(df_nc["Severidad"].value_counts())
-            else:
-                st.info("Sin datos de no conformidades para graficar.")
-
-        with col2:
-            if acciones:
-                df_acciones = pd.DataFrame(
-                    acciones,
-                    columns=[
-                        "ID acción", "ID NC", "Código NC", "Título", "Descripción", "Tipo",
-                        "Responsable", "Estado", "Fecha inicio", "Fecha compromiso", "Fecha cierre",
-                    ],
-                )
-                st.write("### Distribución por estado de acciones")
-                st.bar_chart(df_acciones["Estado"].value_counts())
-            else:
-                st.info("Sin datos de acciones para graficar.")
-
-        st.write("### Tablero ejecutivo")
-        exec_col1, exec_col2 = st.columns(2)
-
-        with exec_col1:
-            if no_conformidades:
-                df_nc_exec = pd.DataFrame(
-                    no_conformidades,
-                    columns=[
-                        "ID", "Código", "Título", "Descripción", "Origen", "Área", "Severidad",
-                        "Estado", "Detectado por", "Responsable", "Fecha detección",
-                        "Fecha compromiso", "Causa raíz", "Fecha cierre",
-                    ],
-                )
-                st.write("#### No conformidades por área")
-                st.bar_chart(df_nc_exec["Área"].value_counts())
-            else:
-                st.info("Sin no conformidades para el tablero.")
-
-        with exec_col2:
-            if acciones:
-                df_acc_exec = pd.DataFrame(
-                    acciones,
-                    columns=[
-                        "ID acción", "ID NC", "Código NC", "Título", "Descripción", "Tipo",
-                        "Responsable", "Estado", "Fecha inicio", "Fecha compromiso", "Fecha cierre",
-                    ],
-                )
-                st.write("#### Acciones por responsable")
-                st.bar_chart(df_acc_exec["Responsable"].value_counts())
-            else:
-                st.info("Sin acciones para el tablero.")
-
-        if acciones:
-            df_acc_exec = pd.DataFrame(
-                acciones,
-                columns=[
-                    "ID acción", "ID NC", "Código NC", "Título", "Descripción", "Tipo",
-                    "Responsable", "Estado", "Fecha inicio", "Fecha compromiso", "Fecha cierre",
-                ],
-            )
-            df_acc_exec["Fecha compromiso"] = pd.to_datetime(df_acc_exec["Fecha compromiso"], errors="coerce")
-            vencidas = df_acc_exec[
-                (df_acc_exec["Estado"] != "Cerrada")
-                & (df_acc_exec["Fecha compromiso"].notna())
-                & (df_acc_exec["Fecha compromiso"] < pd.Timestamp.today().normalize())
-            ]
-            st.write("#### Acciones vencidas prioritarias")
-            if not vencidas.empty:
-                st.dataframe(vencidas, use_container_width=True, hide_index=True)
-            else:
-                st.info("No hay acciones vencidas en este momento.")
+        df_nc_exec = pd.DataFrame()
+        df_acc_exec = pd.DataFrame()
 
         if no_conformidades:
             df_nc_exec = pd.DataFrame(
@@ -1359,15 +1383,218 @@ def mostrar_calidad():
                     "Fecha compromiso", "Causa raíz", "Fecha cierre",
                 ],
             )
-            st.write("#### Hallazgos abiertos críticos o altos")
-            prioridades_nc = df_nc_exec[
+            df_nc_exec["Semáforo"] = df_nc_exec.apply(
+                lambda fila: semaforo_no_conformidad(fila["Estado"], fila["Severidad"]),
+                axis=1,
+            )
+
+        if acciones:
+            df_acc_exec = pd.DataFrame(
+                acciones,
+                columns=[
+                    "ID acción", "ID NC", "Código NC", "Título", "Descripción", "Tipo",
+                    "Responsable", "Estado", "Fecha inicio", "Fecha compromiso", "Fecha cierre",
+                ],
+            )
+            df_acc_exec["Semáforo"] = df_acc_exec.apply(
+                lambda fila: semaforo_accion(fila["Estado"], fila["Fecha compromiso"]),
+                axis=1,
+            )
+            df_acc_exec["Fecha compromiso"] = pd.to_datetime(df_acc_exec["Fecha compromiso"], errors="coerce")
+
+        st.write("### Alertas operativas")
+        alerta_col1, alerta_col2, alerta_col3 = st.columns(3)
+
+        acciones_vencidas = (
+            df_acc_exec[
+                (df_acc_exec["Estado"] != "Cerrada")
+                & (df_acc_exec["Fecha compromiso"].notna())
+                & (df_acc_exec["Fecha compromiso"] < pd.Timestamp.today().normalize())
+            ]
+            if not df_acc_exec.empty
+            else pd.DataFrame()
+        )
+        nc_criticas = (
+            df_nc_exec[
                 (df_nc_exec["Estado"] != "Cerrada")
                 & (df_nc_exec["Severidad"].isin(["Alta", "Crítica"]))
             ]
+            if not df_nc_exec.empty
+            else pd.DataFrame()
+        )
+        auditorias_pendientes = (
+            len([fila for fila in listar_auditorias_calidad() if fila[6] != "Cerrada"])
+        )
+
+        with alerta_col1:
+            if not acciones_vencidas.empty:
+                st.error(f"{len(acciones_vencidas)} acciones vencidas requieren atención.")
+            else:
+                st.success("No hay acciones vencidas.")
+
+        with alerta_col2:
+            if not nc_criticas.empty:
+                st.warning(f"{len(nc_criticas)} no conformidades altas o críticas siguen abiertas.")
+            else:
+                st.success("No hay no conformidades críticas abiertas.")
+
+        with alerta_col3:
+            if auditorias_pendientes > 0:
+                st.info(f"{auditorias_pendientes} auditorías siguen programadas o en ejecución.")
+            else:
+                st.success("No hay auditorías pendientes.")
+
+        tarjeta_seccion(
+            "Filtros",
+            "Filtro ejecutivo",
+            "Usa estos filtros para concentrarte en prioridades y exportar exactamente la vista que necesitas.",
+        )
+
+        exec_filter_col1, exec_filter_col2, exec_filter_col3, exec_filter_col4 = st.columns(4)
+        filtro_exec_estado_nc = exec_filter_col1.selectbox(
+            "Estado NC",
+            ["Todos"] + (sorted(df_nc_exec["Estado"].dropna().unique().tolist()) if not df_nc_exec.empty else []),
+            key="filtro_exec_estado_nc",
+        )
+        filtro_exec_area_nc = exec_filter_col2.selectbox(
+            "Área NC",
+            ["Todos"] + (sorted(df_nc_exec["Área"].dropna().unique().tolist()) if not df_nc_exec.empty else []),
+            key="filtro_exec_area_nc",
+        )
+        filtro_exec_estado_acc = exec_filter_col3.selectbox(
+            "Estado acción",
+            ["Todos"] + (sorted(df_acc_exec["Estado"].dropna().unique().tolist()) if not df_acc_exec.empty else []),
+            key="filtro_exec_estado_acc",
+        )
+        filtro_exec_resp_acc = exec_filter_col4.selectbox(
+            "Responsable acción",
+            ["Todos"] + (sorted(df_acc_exec["Responsable"].dropna().unique().tolist()) if not df_acc_exec.empty else []),
+            key="filtro_exec_resp_acc",
+        )
+
+        if not df_nc_exec.empty:
+            df_nc_exec_filtrado = filtrar_dataframe(
+                df_nc_exec,
+                {
+                    "Estado": filtro_exec_estado_nc,
+                    "Área": filtro_exec_area_nc,
+                },
+            )
+        else:
+            df_nc_exec_filtrado = df_nc_exec
+
+        if not df_acc_exec.empty:
+            df_acc_exec_filtrado = filtrar_dataframe(
+                df_acc_exec,
+                {
+                    "Estado": filtro_exec_estado_acc,
+                    "Responsable": filtro_exec_resp_acc,
+                },
+            )
+        else:
+            df_acc_exec_filtrado = df_acc_exec
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if not df_nc_exec_filtrado.empty:
+                st.write("### Distribución por severidad")
+                st.bar_chart(df_nc_exec_filtrado["Severidad"].value_counts())
+            else:
+                st.info("Sin datos de no conformidades para graficar.")
+
+        with col2:
+            if not df_acc_exec_filtrado.empty:
+                st.write("### Distribución por estado de acciones")
+                st.bar_chart(df_acc_exec_filtrado["Estado"].value_counts())
+            else:
+                st.info("Sin datos de acciones para graficar.")
+
+        st.write("### Tablero ejecutivo")
+        exec_col1, exec_col2 = st.columns(2)
+
+        with exec_col1:
+            if not df_nc_exec_filtrado.empty:
+                st.write("#### No conformidades por área")
+                st.bar_chart(df_nc_exec_filtrado["Área"].value_counts())
+            else:
+                st.info("Sin no conformidades para el tablero.")
+
+        with exec_col2:
+            if not df_acc_exec_filtrado.empty:
+                st.write("#### Acciones por responsable")
+                st.bar_chart(df_acc_exec_filtrado["Responsable"].value_counts())
+            else:
+                st.info("Sin acciones para el tablero.")
+
+        if not df_acc_exec_filtrado.empty:
+            vencidas = df_acc_exec_filtrado[
+                (df_acc_exec_filtrado["Estado"] != "Cerrada")
+                & (df_acc_exec_filtrado["Fecha compromiso"].notna())
+                & (df_acc_exec_filtrado["Fecha compromiso"] < pd.Timestamp.today().normalize())
+            ]
+            st.write("#### Acciones vencidas prioritarias")
+            if not vencidas.empty:
+                st.dataframe(dataframe_con_semaforo(vencidas), use_container_width=True, hide_index=True)
+            else:
+                st.info("No hay acciones vencidas en este momento.")
+        else:
+            vencidas = pd.DataFrame()
+
+        if not df_nc_exec_filtrado.empty:
+            st.write("#### Hallazgos abiertos críticos o altos")
+            prioridades_nc = df_nc_exec_filtrado[
+                (df_nc_exec_filtrado["Estado"] != "Cerrada")
+                & (df_nc_exec_filtrado["Severidad"].isin(["Alta", "Crítica"]))
+            ]
             if not prioridades_nc.empty:
-                st.dataframe(prioridades_nc, use_container_width=True, hide_index=True)
+                st.dataframe(dataframe_con_semaforo(prioridades_nc), use_container_width=True, hide_index=True)
             else:
                 st.info("No hay no conformidades altas o críticas abiertas.")
+        else:
+            prioridades_nc = pd.DataFrame()
+
+        if not df_nc_exec_filtrado.empty:
+            st.write("#### No conformidades filtradas")
+            st.dataframe(dataframe_con_semaforo(df_nc_exec_filtrado), use_container_width=True, hide_index=True)
+
+        if not df_acc_exec_filtrado.empty:
+            st.write("#### Acciones filtradas")
+            st.dataframe(dataframe_con_semaforo(df_acc_exec_filtrado), use_container_width=True, hide_index=True)
+
+        resumen_lineas = [
+            f"No conformidades visibles en tablero: {len(df_nc_exec_filtrado)}",
+            f"Acciones visibles en tablero: {len(df_acc_exec_filtrado)}",
+            f"Acciones vencidas visibles: {len(acciones_vencidas)}",
+            f"No conformidades altas o críticas visibles: {len(prioridades_nc)}",
+        ]
+
+        secciones_exportables = {
+            "No conformidades": df_nc_exec_filtrado,
+            "Acciones": df_acc_exec_filtrado,
+            "Acciones vencidas": acciones_vencidas,
+            "Prioridades NC": prioridades_nc,
+        }
+
+        export_col1, export_col2 = st.columns(2)
+        with export_col1:
+            st.download_button(
+                label="Descargar reporte ejecutivo en Excel",
+                data=generar_excel_ejecutivo(secciones_exportables),
+                file_name="reporte_ejecutivo_calidad.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        with export_col2:
+            try:
+                pdf_bytes = generar_pdf_ejecutivo(resumen_lineas, secciones_exportables)
+                st.download_button(
+                    label="Descargar reporte ejecutivo en PDF",
+                    data=pdf_bytes,
+                    file_name="reporte_ejecutivo_calidad.pdf",
+                    mime="application/pdf",
+                )
+            except RuntimeError as exc:
+                st.warning(str(exc))
 
         evidencia_total = []
         for id_nc, *_ in no_conformidades:
