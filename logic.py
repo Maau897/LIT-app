@@ -6,7 +6,7 @@ import uuid
 import bcrypt
 import pandas as pd
 
-from database import EVIDENCIAS_DIR, conectar_db
+from database import DOCUMENTOS_DIR, EVIDENCIAS_DIR, conectar_db
 
 
 def sumar_meses(fecha_str, meses):
@@ -1213,6 +1213,206 @@ def listar_evidencias_calidad(tipo_entidad: str, id_entidad: int):
     resultados = cursor.fetchall()
     conn.close()
     return resultados
+
+
+def registrar_documento_calidad(datos):
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO calidad_documentos (
+            codigo, nombre, proceso_area, tipo_documento, estado,
+            version_actual, vigente_desde, vigente_hasta, observaciones
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        datos["codigo"],
+        datos["nombre"],
+        datos["proceso_area"],
+        datos["tipo_documento"],
+        datos.get("estado", "Borrador"),
+        datos.get("version_actual"),
+        datos.get("vigente_desde"),
+        datos.get("vigente_hasta"),
+        datos.get("observaciones"),
+    ))
+
+    id_documento = cursor.lastrowid
+
+    if datos.get("usuario_email"):
+        _registrar_evento_calidad_cursor(
+            cursor,
+            entidad_tipo="documento",
+            entidad_id=id_documento,
+            accion="Creación",
+            detalle=f"Se registró el documento {datos['codigo']} en estado {datos.get('estado', 'Borrador')}.",
+            usuario_email=datos["usuario_email"],
+        )
+
+    conn.commit()
+    conn.close()
+
+
+def listar_documentos_calidad():
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            id_documento, codigo, nombre, proceso_area, tipo_documento,
+            estado, version_actual, vigente_desde, vigente_hasta,
+            aprobado_por, fecha_aprobacion, observaciones
+        FROM calidad_documentos
+        ORDER BY datetime(created_at) DESC, id_documento DESC
+    """)
+
+    resultados = cursor.fetchall()
+    conn.close()
+    return resultados
+
+
+def registrar_version_documento(
+    *,
+    id_documento: int,
+    version: str,
+    cambios_resumen: str,
+    elaborado_por: str,
+    nombre_archivo_original: str | None = None,
+    contenido_archivo: bytes | None = None,
+):
+    ruta_destino = None
+
+    if nombre_archivo_original and contenido_archivo is not None:
+        extension = Path(nombre_archivo_original).suffix
+        nombre_guardado = f"documento_{id_documento}_{version}_{uuid.uuid4().hex}{extension}"
+        ruta_destino = DOCUMENTOS_DIR / nombre_guardado
+        with open(ruta_destino, "wb") as archivo:
+            archivo.write(contenido_archivo)
+
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO calidad_documento_versiones (
+            id_documento, version, nombre_archivo, ruta_archivo,
+            cambios_resumen, elaborado_por, es_vigente
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 0)
+    """, (
+        id_documento,
+        version,
+        nombre_archivo_original,
+        str(ruta_destino) if ruta_destino else None,
+        cambios_resumen,
+        elaborado_por,
+    ))
+
+    cursor.execute("""
+        UPDATE calidad_documentos
+        SET version_actual = COALESCE(?, version_actual)
+        WHERE id_documento = ?
+    """, (version, id_documento))
+
+    _registrar_evento_calidad_cursor(
+        cursor,
+        entidad_tipo="documento",
+        entidad_id=id_documento,
+        accion="Nueva versión",
+        detalle=f"Se registró la versión {version} del documento.",
+        usuario_email=elaborado_por,
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def listar_versiones_documento(id_documento: int):
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            id_version, version, nombre_archivo, ruta_archivo, cambios_resumen,
+            elaborado_por, aprobado_por, fecha_aprobacion, es_vigente, created_at
+        FROM calidad_documento_versiones
+        WHERE id_documento = ?
+        ORDER BY datetime(created_at) DESC, id_version DESC
+    """, (id_documento,))
+
+    resultados = cursor.fetchall()
+    conn.close()
+    return resultados
+
+
+def aprobar_version_documento(
+    *,
+    id_documento: int,
+    id_version: int,
+    aprobado_por: str,
+    vigente_desde: str | None = None,
+    vigente_hasta: str | None = None,
+    estado_documento: str = "Vigente",
+    es_admin: bool = False,
+):
+    if not es_admin:
+        raise PermissionError("Solo un administrador puede aprobar una versión documental.")
+
+    conn = conectar_db()
+    cursor = conn.cursor()
+    fecha_actual = datetime.now().strftime("%Y-%m-%d")
+
+    cursor.execute("""
+        UPDATE calidad_documento_versiones
+        SET es_vigente = 0
+        WHERE id_documento = ?
+    """, (id_documento,))
+
+    cursor.execute("""
+        UPDATE calidad_documento_versiones
+        SET aprobado_por = ?,
+            fecha_aprobacion = ?,
+            es_vigente = 1
+        WHERE id_version = ?
+    """, (
+        aprobado_por,
+        fecha_actual,
+        id_version,
+    ))
+
+    cursor.execute("""
+        UPDATE calidad_documentos
+        SET estado = ?,
+            vigente_desde = ?,
+            vigente_hasta = ?,
+            aprobado_por = ?,
+            fecha_aprobacion = ?,
+            version_actual = (
+                SELECT version
+                FROM calidad_documento_versiones
+                WHERE id_version = ?
+            )
+        WHERE id_documento = ?
+    """, (
+        estado_documento,
+        vigente_desde,
+        vigente_hasta,
+        aprobado_por,
+        fecha_actual,
+        id_version,
+        id_documento,
+    ))
+
+    _registrar_evento_calidad_cursor(
+        cursor,
+        entidad_tipo="documento",
+        entidad_id=id_documento,
+        accion="Aprobación documental",
+        detalle=f"Se aprobó formalmente una versión documental y se marcó como {estado_documento}.",
+        usuario_email=aprobado_por,
+    )
+
+    conn.commit()
+    conn.close()
 
 
 def registrar_auditoria_calidad(datos):

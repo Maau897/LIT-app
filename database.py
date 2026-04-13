@@ -3,6 +3,7 @@ from pathlib import Path
 
 DB_NAME = Path(__file__).resolve().parent / "iner_voluntarios.db"
 EVIDENCIAS_DIR = Path(__file__).resolve().parent / "evidencias_calidad"
+DOCUMENTOS_DIR = Path(__file__).resolve().parent / "documentos_calidad"
 
 
 def conectar_db():
@@ -19,6 +20,7 @@ def asegurar_columna(cursor, tabla, columna, definicion):
 
 def crear_tablas():
     EVIDENCIAS_DIR.mkdir(exist_ok=True)
+    DOCUMENTOS_DIR.mkdir(exist_ok=True)
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -205,6 +207,41 @@ def crear_tablas():
         detalle TEXT NOT NULL,
         usuario_email TEXT NOT NULL,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS calidad_documentos (
+        id_documento INTEGER PRIMARY KEY AUTOINCREMENT,
+        codigo TEXT UNIQUE NOT NULL,
+        nombre TEXT NOT NULL,
+        proceso_area TEXT NOT NULL,
+        tipo_documento TEXT NOT NULL,
+        estado TEXT NOT NULL DEFAULT 'Borrador',
+        version_actual TEXT,
+        vigente_desde TEXT,
+        vigente_hasta TEXT,
+        aprobado_por TEXT,
+        fecha_aprobacion TEXT,
+        observaciones TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS calidad_documento_versiones (
+        id_version INTEGER PRIMARY KEY AUTOINCREMENT,
+        id_documento INTEGER NOT NULL,
+        version TEXT NOT NULL,
+        nombre_archivo TEXT,
+        ruta_archivo TEXT,
+        cambios_resumen TEXT,
+        elaborado_por TEXT NOT NULL,
+        aprobado_por TEXT,
+        fecha_aprobacion TEXT,
+        es_vigente INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (id_documento) REFERENCES calidad_documentos(id_documento)
     )
     """)
 
