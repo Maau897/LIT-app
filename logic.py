@@ -1,10 +1,12 @@
 ﻿from datetime import datetime
 import calendar
+from pathlib import Path
+import uuid
 
 import bcrypt
 import pandas as pd
 
-from database import conectar_db
+from database import EVIDENCIAS_DIR, conectar_db
 
 
 def sumar_meses(fecha_str, meses):
@@ -801,3 +803,218 @@ def contar_acciones_vencidas():
     total = cursor.fetchone()[0]
     conn.close()
     return total
+
+
+def actualizar_estado_no_conformidad(
+    id_no_conformidad: int,
+    nuevo_estado: str,
+    causa_raiz: str | None = None,
+    verificacion_cierre: str | None = None,
+    es_admin: bool = False,
+):
+    if nuevo_estado == "Cerrada" and not es_admin:
+        raise PermissionError("Solo un administrador puede cerrar una no conformidad.")
+
+    conn = conectar_db()
+    cursor = conn.cursor()
+    fecha_cierre = datetime.now().strftime("%Y-%m-%d") if nuevo_estado == "Cerrada" else None
+
+    cursor.execute("""
+        UPDATE calidad_no_conformidades
+        SET estado = ?,
+            causa_raiz = COALESCE(?, causa_raiz),
+            verificacion_cierre = CASE
+                WHEN ? IS NOT NULL AND ? != '' THEN ?
+                ELSE verificacion_cierre
+            END,
+            fecha_cierre = ?
+        WHERE id_no_conformidad = ?
+    """, (
+        nuevo_estado,
+        causa_raiz,
+        verificacion_cierre,
+        verificacion_cierre,
+        verificacion_cierre,
+        fecha_cierre,
+        id_no_conformidad,
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def actualizar_estado_accion_calidad(
+    id_accion: int,
+    nuevo_estado: str,
+    verificacion_eficacia: str | None = None,
+):
+    conn = conectar_db()
+    cursor = conn.cursor()
+    fecha_cierre = datetime.now().strftime("%Y-%m-%d") if nuevo_estado == "Cerrada" else None
+
+    cursor.execute("""
+        UPDATE calidad_acciones
+        SET estado = ?,
+            verificacion_eficacia = CASE
+                WHEN ? IS NOT NULL AND ? != '' THEN ?
+                ELSE verificacion_eficacia
+            END,
+            fecha_cierre = ?
+        WHERE id_accion = ?
+    """, (
+        nuevo_estado,
+        verificacion_eficacia,
+        verificacion_eficacia,
+        verificacion_eficacia,
+        fecha_cierre,
+        id_accion,
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def guardar_evidencia_calidad(
+    *,
+    tipo_entidad: str,
+    id_entidad: int,
+    nombre_archivo_original: str,
+    contenido_archivo: bytes,
+    descripcion: str,
+    subido_por: str,
+):
+    extension = Path(nombre_archivo_original).suffix
+    nombre_guardado = f"{tipo_entidad}_{id_entidad}_{uuid.uuid4().hex}{extension}"
+    ruta_destino = EVIDENCIAS_DIR / nombre_guardado
+
+    with open(ruta_destino, "wb") as archivo:
+        archivo.write(contenido_archivo)
+
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO calidad_evidencias (
+            tipo_entidad, id_entidad, nombre_archivo, ruta_archivo, descripcion, subido_por
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (
+        tipo_entidad,
+        id_entidad,
+        nombre_archivo_original,
+        str(ruta_destino),
+        descripcion,
+        subido_por,
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def listar_evidencias_calidad(tipo_entidad: str, id_entidad: int):
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT id_evidencia, nombre_archivo, descripcion, subido_por, ruta_archivo, created_at
+        FROM calidad_evidencias
+        WHERE tipo_entidad = ? AND id_entidad = ?
+        ORDER BY datetime(created_at) DESC, id_evidencia DESC
+    """, (tipo_entidad, id_entidad))
+
+    resultados = cursor.fetchall()
+    conn.close()
+    return resultados
+
+
+def registrar_auditoria_calidad(datos):
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO calidad_auditorias (
+            codigo, titulo, area, auditor_lider, fecha_programada,
+            alcance, criterios, estado, resultado
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        datos["codigo"],
+        datos["titulo"],
+        datos["area"],
+        datos["auditor_lider"],
+        datos["fecha_programada"],
+        datos.get("alcance"),
+        datos.get("criterios"),
+        datos.get("estado", "Programada"),
+        datos.get("resultado"),
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def listar_auditorias_calidad():
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            id_auditoria, codigo, titulo, area, auditor_lider,
+            fecha_programada, estado, resultado
+        FROM calidad_auditorias
+        ORDER BY date(fecha_programada) DESC, id_auditoria DESC
+    """)
+
+    resultados = cursor.fetchall()
+    conn.close()
+    return resultados
+
+
+def registrar_hallazgo_auditoria(datos):
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO calidad_auditoria_hallazgos (
+            id_auditoria, referencia, descripcion, severidad,
+            estado, responsable, fecha_compromiso
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        datos["id_auditoria"],
+        datos["referencia"],
+        datos["descripcion"],
+        datos["severidad"],
+        datos.get("estado", "Abierto"),
+        datos.get("responsable"),
+        datos.get("fecha_compromiso"),
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def listar_hallazgos_auditoria():
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            h.id_hallazgo,
+            h.id_auditoria,
+            a.codigo,
+            h.referencia,
+            h.descripcion,
+            h.severidad,
+            h.estado,
+            h.responsable,
+            h.fecha_compromiso
+        FROM calidad_auditoria_hallazgos h
+        INNER JOIN calidad_auditorias a
+            ON a.id_auditoria = h.id_auditoria
+        ORDER BY datetime(h.created_at) DESC, h.id_hallazgo DESC
+    """)
+
+    resultados = cursor.fetchall()
+    conn.close()
+    return resultados

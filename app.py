@@ -17,6 +17,8 @@ from google_sheets import (
 )
 from logic import (
     aprobar_usuario,
+    actualizar_estado_accion_calidad,
+    actualizar_estado_no_conformidad,
     autenticar_usuario,
     buscar_voluntario_por_id,
     contar_acciones_abiertas,
@@ -26,11 +28,17 @@ from logic import (
     contar_visitas_pendientes,
     contar_voluntarios,
     exportar_a_excel,
+    guardar_evidencia_calidad,
+    listar_auditorias_calidad,
     listar_acciones_calidad,
+    listar_evidencias_calidad,
+    listar_hallazgos_auditoria,
     listar_no_conformidades,
     obtener_ocupacion_racks,
     obtener_usuarios_pendientes,
+    registrar_auditoria_calidad,
     registrar_accion_calidad,
+    registrar_hallazgo_auditoria,
     registrar_no_conformidad,
     registrar_usuario,
     registrar_voluntario,
@@ -659,7 +667,7 @@ def mostrar_calidad():
     with col3:
         st.metric("Acciones vencidas", contar_acciones_vencidas())
 
-    tab1, tab2, tab3 = st.tabs(["No conformidades", "Acciones", "Seguimiento"])
+    tab1, tab2, tab3, tab4 = st.tabs(["No conformidades", "Acciones", "Auditorías", "Seguimiento"])
 
     with tab1:
         tarjeta_seccion(
@@ -738,6 +746,93 @@ def mostrar_calidad():
         else:
             st.info("Todavía no hay no conformidades registradas.")
 
+        tarjeta_seccion(
+            "Estado",
+            "Actualizar no conformidad",
+            "Puedes mover hallazgos a En proceso y solo administradores pueden cerrarlos formalmente.",
+        )
+
+        if no_conformidades:
+            opciones_estado_nc = {
+                f"{codigo} | {titulo} | {estado}": id_nc
+                for id_nc, codigo, titulo, _, _, _, estado, *_ in no_conformidades
+            }
+
+            with st.form("form_estado_nc"):
+                seleccion_nc = st.selectbox("Selecciona la no conformidad", list(opciones_estado_nc.keys()))
+                nuevo_estado_nc = st.selectbox("Nuevo estado", ["Abierta", "En proceso", "Cerrada"])
+                causa_raiz_update = st.text_area("Actualizar causa raíz", key="causa_raiz_update")
+                verificacion_cierre = st.text_area("Verificación de cierre", key="verificacion_cierre_nc")
+                guardar_estado_nc = st.form_submit_button("Actualizar estado")
+
+            if guardar_estado_nc:
+                try:
+                    actualizar_estado_no_conformidad(
+                        id_no_conformidad=opciones_estado_nc[seleccion_nc],
+                        nuevo_estado=nuevo_estado_nc,
+                        causa_raiz=causa_raiz_update.strip() or None,
+                        verificacion_cierre=verificacion_cierre.strip() or None,
+                        es_admin=st.session_state.get("es_admin", False),
+                    )
+                    st.success("Estado de no conformidad actualizado.")
+                    st.rerun()
+                except PermissionError as e:
+                    st.warning(str(e))
+                except Exception as e:
+                    st.error(f"No se pudo actualizar el estado: {e}")
+
+            tarjeta_seccion(
+                "Evidencia",
+                "Adjuntar archivo a no conformidad",
+                "Permite conservar soportes del hallazgo o del cierre en la misma plataforma.",
+            )
+
+            with st.form("form_evidencia_nc"):
+                evidencia_nc = st.selectbox("No conformidad para evidencia", list(opciones_estado_nc.keys()), key="evidencia_nc")
+                descripcion_evidencia_nc = st.text_input("Descripción de la evidencia", key="descripcion_evidencia_nc")
+                archivo_nc = st.file_uploader(
+                    "Archivo de evidencia",
+                    key="archivo_evidencia_nc",
+                    type=None,
+                )
+                guardar_evidencia_nc = st.form_submit_button("Guardar evidencia")
+
+            if guardar_evidencia_nc:
+                if archivo_nc is None:
+                    st.warning("Selecciona un archivo para guardar la evidencia.")
+                else:
+                    try:
+                        guardar_evidencia_calidad(
+                            tipo_entidad="no_conformidad",
+                            id_entidad=opciones_estado_nc[evidencia_nc],
+                            nombre_archivo_original=archivo_nc.name,
+                            contenido_archivo=archivo_nc.getvalue(),
+                            descripcion=descripcion_evidencia_nc.strip(),
+                            subido_por=st.session_state.get("usuario_email", ""),
+                        )
+                        st.success("Evidencia guardada correctamente.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"No se pudo guardar la evidencia: {e}")
+
+            evidencia_nc_tabla = []
+            for etiqueta, id_nc in opciones_estado_nc.items():
+                for id_evidencia, nombre_archivo, descripcion, subido_por, ruta_archivo, created_at in listar_evidencias_calidad("no_conformidad", id_nc):
+                    evidencia_nc_tabla.append(
+                        {
+                            "No conformidad": etiqueta,
+                            "Archivo": nombre_archivo,
+                            "Descripción": descripcion,
+                            "Subido por": subido_por,
+                            "Fecha": created_at,
+                            "Ruta": ruta_archivo,
+                        }
+                    )
+
+            if evidencia_nc_tabla:
+                st.write("### Evidencias de no conformidades")
+                st.dataframe(pd.DataFrame(evidencia_nc_tabla), use_container_width=True, hide_index=True)
+
     with tab2:
         tarjeta_seccion(
             "Acción",
@@ -807,7 +902,185 @@ def mostrar_calidad():
         else:
             st.info("Todavía no hay acciones registradas.")
 
+        if acciones:
+            tarjeta_seccion(
+                "Estado",
+                "Actualizar acción",
+                "Las acciones pueden pasar a En proceso o Cerrada y registrar verificación de eficacia.",
+            )
+
+            opciones_accion = {
+                f"{codigo_nc} | {titulo_accion} | {estado}": id_accion
+                for id_accion, _, codigo_nc, titulo_accion, _, _, estado, *_ in acciones
+            }
+
+            with st.form("form_estado_accion"):
+                seleccion_accion = st.selectbox("Selecciona la acción", list(opciones_accion.keys()))
+                nuevo_estado_accion = st.selectbox("Nuevo estado de la acción", ["Abierta", "En proceso", "Cerrada"])
+                verificacion_eficacia = st.text_area("Verificación de eficacia", key="verificacion_eficacia")
+                guardar_estado_accion = st.form_submit_button("Actualizar acción")
+
+            if guardar_estado_accion:
+                try:
+                    actualizar_estado_accion_calidad(
+                        id_accion=opciones_accion[seleccion_accion],
+                        nuevo_estado=nuevo_estado_accion,
+                        verificacion_eficacia=verificacion_eficacia.strip() or None,
+                    )
+                    st.success("Acción actualizada correctamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"No se pudo actualizar la acción: {e}")
+
+            tarjeta_seccion(
+                "Evidencia",
+                "Adjuntar archivo a acción",
+                "Útil para guardar planes, formatos, fotos o pruebas de implementación.",
+            )
+
+            with st.form("form_evidencia_accion"):
+                evidencia_accion = st.selectbox("Acción para evidencia", list(opciones_accion.keys()), key="evidencia_accion")
+                descripcion_evidencia_accion = st.text_input("Descripción de la evidencia", key="descripcion_evidencia_accion")
+                archivo_accion = st.file_uploader(
+                    "Archivo de evidencia de acción",
+                    key="archivo_evidencia_accion",
+                    type=None,
+                )
+                guardar_evidencia_accion = st.form_submit_button("Guardar evidencia de acción")
+
+            if guardar_evidencia_accion:
+                if archivo_accion is None:
+                    st.warning("Selecciona un archivo para guardar la evidencia.")
+                else:
+                    try:
+                        guardar_evidencia_calidad(
+                            tipo_entidad="accion",
+                            id_entidad=opciones_accion[evidencia_accion],
+                            nombre_archivo_original=archivo_accion.name,
+                            contenido_archivo=archivo_accion.getvalue(),
+                            descripcion=descripcion_evidencia_accion.strip(),
+                            subido_por=st.session_state.get("usuario_email", ""),
+                        )
+                        st.success("Evidencia de acción guardada correctamente.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"No se pudo guardar la evidencia: {e}")
+
     with tab3:
+        tarjeta_seccion(
+            "Auditoría",
+            "Programación de auditorías internas",
+            "Deja programadas auditorías, criterios y responsable para fortalecer la preparación de ISO 9001.",
+        )
+
+        with st.form("form_auditoria", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+
+            with col1:
+                codigo_auditoria = st.text_input("Código de auditoría", placeholder="AUD-2026-001")
+                titulo_auditoria = st.text_input("Título")
+                area_auditoria = st.text_input("Área auditada")
+                auditor_lider = st.text_input("Auditor líder")
+
+            with col2:
+                fecha_programada = st.date_input("Fecha programada", key="fecha_programada_auditoria")
+                estado_auditoria = st.selectbox("Estado", ["Programada", "En ejecución", "Cerrada"])
+                alcance_auditoria = st.text_area("Alcance")
+                criterios_auditoria = st.text_area("Criterios")
+
+            guardar_auditoria = st.form_submit_button("Guardar auditoría")
+
+        if guardar_auditoria:
+            datos_auditoria = {
+                "codigo": codigo_auditoria.strip(),
+                "titulo": titulo_auditoria.strip(),
+                "area": area_auditoria.strip(),
+                "auditor_lider": auditor_lider.strip(),
+                "fecha_programada": str(fecha_programada),
+                "alcance": alcance_auditoria.strip(),
+                "criterios": criterios_auditoria.strip(),
+                "estado": estado_auditoria,
+            }
+
+            campos_requeridos = ["codigo", "titulo", "area", "auditor_lider"]
+            if any(not datos_auditoria[campo] for campo in campos_requeridos):
+                st.warning("Completa los campos obligatorios de la auditoría.")
+            else:
+                try:
+                    registrar_auditoria_calidad(datos_auditoria)
+                    st.success("Auditoría registrada correctamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"No se pudo registrar la auditoría: {e}")
+
+        auditorias = listar_auditorias_calidad()
+        st.subheader("Auditorías internas")
+
+        if auditorias:
+            df_auditorias = pd.DataFrame(
+                auditorias,
+                columns=["ID", "Código", "Título", "Área", "Auditor líder", "Fecha programada", "Estado", "Resultado"],
+            )
+            st.dataframe(df_auditorias, use_container_width=True, hide_index=True)
+        else:
+            st.info("Todavía no hay auditorías registradas.")
+
+        tarjeta_seccion(
+            "Hallazgo",
+            "Registrar hallazgo de auditoría",
+            "Cada auditoría puede generar hallazgos con severidad, responsable y fecha compromiso.",
+        )
+
+        if auditorias:
+            opciones_auditoria = {
+                f"{codigo} | {titulo}": id_auditoria
+                for id_auditoria, codigo, titulo, *_ in auditorias
+            }
+
+            with st.form("form_hallazgo_auditoria", clear_on_submit=True):
+                auditoria_hallazgo = st.selectbox("Auditoría asociada", list(opciones_auditoria.keys()))
+                referencia_hallazgo = st.text_input("Referencia", placeholder="ISO 9001 - 8.7")
+                descripcion_hallazgo = st.text_area("Descripción del hallazgo")
+                col1, col2 = st.columns(2)
+                with col1:
+                    severidad_hallazgo = st.selectbox("Severidad del hallazgo", ["Menor", "Mayor", "Crítica"])
+                    responsable_hallazgo = st.text_input("Responsable")
+                with col2:
+                    estado_hallazgo = st.selectbox("Estado del hallazgo", ["Abierto", "En proceso", "Cerrado"])
+                    fecha_compromiso_hallazgo = st.date_input("Fecha compromiso", key="fecha_compromiso_hallazgo")
+                guardar_hallazgo = st.form_submit_button("Guardar hallazgo")
+
+            if guardar_hallazgo:
+                datos_hallazgo = {
+                    "id_auditoria": opciones_auditoria[auditoria_hallazgo],
+                    "referencia": referencia_hallazgo.strip(),
+                    "descripcion": descripcion_hallazgo.strip(),
+                    "severidad": severidad_hallazgo,
+                    "estado": estado_hallazgo,
+                    "responsable": responsable_hallazgo.strip(),
+                    "fecha_compromiso": str(fecha_compromiso_hallazgo),
+                }
+
+                if not datos_hallazgo["referencia"] or not datos_hallazgo["descripcion"]:
+                    st.warning("Completa la referencia y la descripción del hallazgo.")
+                else:
+                    try:
+                        registrar_hallazgo_auditoria(datos_hallazgo)
+                        st.success("Hallazgo registrado correctamente.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"No se pudo registrar el hallazgo: {e}")
+
+        hallazgos = listar_hallazgos_auditoria()
+        if hallazgos:
+            st.write("### Hallazgos de auditoría")
+            df_hallazgos = pd.DataFrame(
+                hallazgos,
+                columns=["ID hallazgo", "ID auditoría", "Código auditoría", "Referencia", "Descripción", "Severidad", "Estado", "Responsable", "Fecha compromiso"],
+            )
+            st.dataframe(df_hallazgos, use_container_width=True, hide_index=True)
+
+    with tab4:
         tarjeta_seccion(
             "Control",
             "Vista de seguimiento",
@@ -847,6 +1120,28 @@ def mostrar_calidad():
                 st.bar_chart(df_acciones["Estado"].value_counts())
             else:
                 st.info("Sin datos de acciones para graficar.")
+
+        evidencia_total = []
+        for id_nc, *_ in no_conformidades:
+            evidencia_total.extend(listar_evidencias_calidad("no_conformidad", id_nc))
+        for id_accion, *_ in acciones:
+            evidencia_total.extend(listar_evidencias_calidad("accion", id_accion))
+
+        if evidencia_total:
+            st.write("### Descarga de evidencias")
+            for id_evidencia, nombre_archivo, descripcion, subido_por, ruta_archivo, created_at in evidencia_total:
+                try:
+                    with open(ruta_archivo, "rb") as archivo:
+                        st.download_button(
+                            label=f"Descargar {nombre_archivo}",
+                            data=archivo.read(),
+                            file_name=nombre_archivo,
+                            key=f"descarga_evidencia_{id_evidencia}",
+                        )
+                    if descripcion:
+                        st.caption(f"{descripcion} | {subido_por} | {created_at}")
+                except FileNotFoundError:
+                    st.warning(f"No se encontró el archivo {nombre_archivo} en la ruta almacenada.")
 
 
 st.sidebar.title("Navegación")
