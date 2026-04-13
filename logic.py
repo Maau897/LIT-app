@@ -830,7 +830,7 @@ def listar_no_conformidades():
         SELECT
             id_no_conformidad, codigo, titulo, descripcion, origen, area, severidad,
             estado, detectado_por, responsable, fecha_deteccion,
-            fecha_compromiso, causa_raiz, fecha_cierre
+            fecha_compromiso, causa_raiz, fecha_cierre, aprobado_por, fecha_aprobacion, comentario_final
         FROM calidad_no_conformidades
         ORDER BY datetime(created_at) DESC, id_no_conformidad DESC
     """)
@@ -856,7 +856,10 @@ def listar_acciones_calidad():
             a.estado,
             a.fecha_inicio,
             a.fecha_compromiso,
-            a.fecha_cierre
+            a.fecha_cierre,
+            a.aprobado_por,
+            a.fecha_aprobacion,
+            a.comentario_final
         FROM calidad_acciones a
         INNER JOIN calidad_no_conformidades nc
             ON nc.id_no_conformidad = a.id_no_conformidad
@@ -1043,6 +1046,108 @@ def actualizar_estado_accion_calidad(
             detalle=detalle,
             usuario_email=usuario_email,
         )
+
+    conn.commit()
+    conn.close()
+
+
+def aprobar_cierre_no_conformidad(
+    *,
+    id_no_conformidad: int,
+    aprobado_por: str,
+    comentario_final: str,
+    verificacion_cierre: str | None = None,
+    es_admin: bool = False,
+):
+    if not es_admin:
+        raise PermissionError("Solo un administrador puede aprobar el cierre formal de una no conformidad.")
+
+    conn = conectar_db()
+    cursor = conn.cursor()
+    fecha_actual = datetime.now().strftime("%Y-%m-%d")
+
+    cursor.execute("""
+        UPDATE calidad_no_conformidades
+        SET estado = 'Cerrada',
+            fecha_cierre = ?,
+            aprobado_por = ?,
+            fecha_aprobacion = ?,
+            comentario_final = ?,
+            verificacion_cierre = CASE
+                WHEN ? IS NOT NULL AND ? != '' THEN ?
+                ELSE verificacion_cierre
+            END
+        WHERE id_no_conformidad = ?
+    """, (
+        fecha_actual,
+        aprobado_por,
+        fecha_actual,
+        comentario_final,
+        verificacion_cierre,
+        verificacion_cierre,
+        verificacion_cierre,
+        id_no_conformidad,
+    ))
+
+    _registrar_evento_calidad_cursor(
+        cursor,
+        entidad_tipo="no_conformidad",
+        entidad_id=id_no_conformidad,
+        accion="Cierre formal",
+        detalle=f"Cierre aprobado por {aprobado_por}. Comentario final registrado.",
+        usuario_email=aprobado_por,
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def aprobar_cierre_accion(
+    *,
+    id_accion: int,
+    aprobado_por: str,
+    comentario_final: str,
+    verificacion_eficacia: str | None = None,
+    es_admin: bool = False,
+):
+    if not es_admin:
+        raise PermissionError("Solo un administrador puede aprobar el cierre formal de una acción.")
+
+    conn = conectar_db()
+    cursor = conn.cursor()
+    fecha_actual = datetime.now().strftime("%Y-%m-%d")
+
+    cursor.execute("""
+        UPDATE calidad_acciones
+        SET estado = 'Cerrada',
+            fecha_cierre = ?,
+            aprobado_por = ?,
+            fecha_aprobacion = ?,
+            comentario_final = ?,
+            verificacion_eficacia = CASE
+                WHEN ? IS NOT NULL AND ? != '' THEN ?
+                ELSE verificacion_eficacia
+            END
+        WHERE id_accion = ?
+    """, (
+        fecha_actual,
+        aprobado_por,
+        fecha_actual,
+        comentario_final,
+        verificacion_eficacia,
+        verificacion_eficacia,
+        verificacion_eficacia,
+        id_accion,
+    ))
+
+    _registrar_evento_calidad_cursor(
+        cursor,
+        entidad_tipo="accion",
+        entidad_id=id_accion,
+        accion="Cierre formal",
+        detalle=f"Cierre aprobado por {aprobado_por}. Comentario final registrado.",
+        usuario_email=aprobado_por,
+    )
 
     conn.commit()
     conn.close()

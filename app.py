@@ -17,6 +17,8 @@ from google_sheets import (
 )
 from logic import (
     aprobar_usuario,
+    aprobar_cierre_accion,
+    aprobar_cierre_no_conformidad,
     actualizar_estado_accion_calidad,
     actualizar_accion_calidad,
     actualizar_estado_no_conformidad,
@@ -855,7 +857,7 @@ def mostrar_calidad():
                 columns=[
                     "ID", "Código", "Título", "Descripción", "Origen", "Área", "Severidad",
                     "Estado", "Detectado por", "Responsable", "Fecha detección",
-                    "Fecha compromiso", "Causa raíz", "Fecha cierre",
+                    "Fecha compromiso", "Causa raíz", "Fecha cierre", "Aprobado por", "Fecha aprobación", "Comentario final",
                 ],
             )
 
@@ -899,8 +901,11 @@ def mostrar_calidad():
                     "fecha_compromiso": fecha_compromiso,
                     "causa_raiz": causa_raiz,
                     "fecha_cierre": fecha_cierre,
+                    "aprobado_por": aprobado_por,
+                    "fecha_aprobacion": fecha_aprobacion,
+                    "comentario_final": comentario_final,
                 }
-                for id_nc, codigo, titulo, descripcion, origen, area, severidad, estado, detectado_por, responsable, fecha_deteccion, fecha_compromiso, causa_raiz, fecha_cierre
+                for id_nc, codigo, titulo, descripcion, origen, area, severidad, estado, detectado_por, responsable, fecha_deteccion, fecha_compromiso, causa_raiz, fecha_cierre, aprobado_por, fecha_aprobacion, comentario_final
                 in no_conformidades
             }
 
@@ -955,12 +960,12 @@ def mostrar_calidad():
         if no_conformidades:
             opciones_estado_nc = {
                 f"{codigo} | {titulo} | {estado}": id_nc
-                for id_nc, codigo, titulo, _, _, _, estado, *_ in no_conformidades
+                for id_nc, codigo, titulo, _, _, _, _, estado, *_ in no_conformidades
             }
 
             with st.form("form_estado_nc"):
                 seleccion_nc = st.selectbox("Selecciona la no conformidad", list(opciones_estado_nc.keys()))
-                nuevo_estado_nc = st.selectbox("Nuevo estado", ["Abierta", "En proceso", "Cerrada"])
+                nuevo_estado_nc = st.selectbox("Nuevo estado", ["Abierta", "En proceso"])
                 causa_raiz_update = st.text_area("Actualizar causa raíz", key="causa_raiz_update")
                 verificacion_cierre = st.text_area("Verificación de cierre", key="verificacion_cierre_nc")
                 guardar_estado_nc = st.form_submit_button("Actualizar estado")
@@ -1034,6 +1039,34 @@ def mostrar_calidad():
                 st.write("### Evidencias de no conformidades")
                 st.dataframe(pd.DataFrame(evidencia_nc_tabla), use_container_width=True, hide_index=True)
 
+            tarjeta_seccion(
+                "Aprobación",
+                "Cierre formal de no conformidad",
+                "El cierre formal deja aprobador, fecha de aprobación y comentario final para auditoría.",
+            )
+
+            with st.form("form_cierre_formal_nc"):
+                seleccion_cierre_nc = st.selectbox("No conformidad para cierre formal", list(opciones_estado_nc.keys()), key="seleccion_cierre_formal_nc")
+                verificacion_cierre_formal = st.text_area("Verificación de cierre final", key="verificacion_cierre_formal")
+                comentario_final_nc = st.text_area("Comentario final de aprobación", key="comentario_final_nc")
+                aprobar_cierre_nc = st.form_submit_button("Aprobar cierre formal")
+
+            if aprobar_cierre_nc:
+                try:
+                    aprobar_cierre_no_conformidad(
+                        id_no_conformidad=opciones_estado_nc[seleccion_cierre_nc],
+                        aprobado_por=st.session_state.get("usuario_email", ""),
+                        comentario_final=comentario_final_nc.strip(),
+                        verificacion_cierre=verificacion_cierre_formal.strip() or None,
+                        es_admin=st.session_state.get("es_admin", False),
+                    )
+                    st.success("Cierre formal de no conformidad aprobado.")
+                    st.rerun()
+                except PermissionError as e:
+                    st.warning(str(e))
+                except Exception as e:
+                    st.error(f"No se pudo aprobar el cierre formal: {e}")
+
     with tab2:
         tarjeta_seccion(
             "Acción",
@@ -1097,7 +1130,7 @@ def mostrar_calidad():
                 acciones,
                 columns=[
                     "ID acción", "ID NC", "Código NC", "Título", "Descripción", "Tipo",
-                    "Responsable", "Estado", "Fecha inicio", "Fecha compromiso", "Fecha cierre",
+                    "Responsable", "Estado", "Fecha inicio", "Fecha compromiso", "Fecha cierre", "Aprobado por", "Fecha aprobación", "Comentario final",
                 ],
             )
             colf1, colf2, colf3 = st.columns(3)
@@ -1135,8 +1168,11 @@ def mostrar_calidad():
                     "fecha_inicio": fecha_inicio,
                     "fecha_compromiso": fecha_compromiso,
                     "fecha_cierre": fecha_cierre,
+                    "aprobado_por": aprobado_por,
+                    "fecha_aprobacion": fecha_aprobacion,
+                    "comentario_final": comentario_final,
                 }
-                for id_accion, _, codigo_nc, titulo_accion, descripcion_accion, tipo_accion, responsable, estado, fecha_inicio, fecha_compromiso, fecha_cierre in acciones
+                for id_accion, _, codigo_nc, titulo_accion, descripcion_accion, tipo_accion, responsable, estado, fecha_inicio, fecha_compromiso, fecha_cierre, aprobado_por, fecha_aprobacion, comentario_final in acciones
             }
 
             with st.form("form_editar_accion"):
@@ -1185,7 +1221,7 @@ def mostrar_calidad():
 
             with st.form("form_estado_accion"):
                 seleccion_accion = st.selectbox("Selecciona la acción", list(opciones_accion.keys()))
-                nuevo_estado_accion = st.selectbox("Nuevo estado de la acción", ["Abierta", "En proceso", "Cerrada"])
+                nuevo_estado_accion = st.selectbox("Nuevo estado de la acción", ["Abierta", "En proceso"])
                 verificacion_eficacia = st.text_area("Verificación de eficacia", key="verificacion_eficacia")
                 guardar_estado_accion = st.form_submit_button("Actualizar acción")
 
@@ -1235,6 +1271,34 @@ def mostrar_calidad():
                         st.rerun()
                     except Exception as e:
                         st.error(f"No se pudo guardar la evidencia: {e}")
+
+            tarjeta_seccion(
+                "Aprobación",
+                "Cierre formal de acción",
+                "El cierre formal deja aprobado por, fecha y comentario final con evidencia de eficacia.",
+            )
+
+            with st.form("form_cierre_formal_accion"):
+                seleccion_cierre_accion = st.selectbox("Acción para cierre formal", list(opciones_accion.keys()), key="seleccion_cierre_formal_accion")
+                verificacion_eficacia_formal = st.text_area("Verificación de eficacia final", key="verificacion_eficacia_formal")
+                comentario_final_accion = st.text_area("Comentario final de aprobación", key="comentario_final_accion")
+                aprobar_cierre_accion_btn = st.form_submit_button("Aprobar cierre formal de acción")
+
+            if aprobar_cierre_accion_btn:
+                try:
+                    aprobar_cierre_accion(
+                        id_accion=opciones_accion[seleccion_cierre_accion],
+                        aprobado_por=st.session_state.get("usuario_email", ""),
+                        comentario_final=comentario_final_accion.strip(),
+                        verificacion_eficacia=verificacion_eficacia_formal.strip() or None,
+                        es_admin=st.session_state.get("es_admin", False),
+                    )
+                    st.success("Cierre formal de acción aprobado.")
+                    st.rerun()
+                except PermissionError as e:
+                    st.warning(str(e))
+                except Exception as e:
+                    st.error(f"No se pudo aprobar el cierre formal de la acción: {e}")
 
     with tab3:
         tarjeta_seccion(
@@ -1380,7 +1444,7 @@ def mostrar_calidad():
                 columns=[
                     "ID", "Código", "Título", "Descripción", "Origen", "Área", "Severidad",
                     "Estado", "Detectado por", "Responsable", "Fecha detección",
-                    "Fecha compromiso", "Causa raíz", "Fecha cierre",
+                    "Fecha compromiso", "Causa raíz", "Fecha cierre", "Aprobado por", "Fecha aprobación", "Comentario final",
                 ],
             )
             df_nc_exec["Semáforo"] = df_nc_exec.apply(
@@ -1393,7 +1457,7 @@ def mostrar_calidad():
                 acciones,
                 columns=[
                     "ID acción", "ID NC", "Código NC", "Título", "Descripción", "Tipo",
-                    "Responsable", "Estado", "Fecha inicio", "Fecha compromiso", "Fecha cierre",
+                    "Responsable", "Estado", "Fecha inicio", "Fecha compromiso", "Fecha cierre", "Aprobado por", "Fecha aprobación", "Comentario final",
                 ],
             )
             df_acc_exec["Semáforo"] = df_acc_exec.apply(
