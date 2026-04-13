@@ -18,7 +18,9 @@ from google_sheets import (
 from logic import (
     aprobar_usuario,
     actualizar_estado_accion_calidad,
+    actualizar_accion_calidad,
     actualizar_estado_no_conformidad,
+    actualizar_no_conformidad,
     autenticar_usuario,
     buscar_voluntario_por_id,
     contar_acciones_abiertas,
@@ -649,6 +651,13 @@ def mostrar_proyecto_hospitalario():
 
 
 def mostrar_calidad():
+    def filtrar_dataframe(df, filtros):
+        df_filtrado = df.copy()
+        for columna, valor in filtros.items():
+            if valor and valor != "Todos" and columna in df_filtrado.columns:
+                df_filtrado = df_filtrado[df_filtrado[columna].astype(str) == valor]
+        return df_filtrado
+
     st.markdown(
         """
         <div class="iner-hero">
@@ -739,14 +748,98 @@ def mostrar_calidad():
             df_nc = pd.DataFrame(
                 no_conformidades,
                 columns=[
-                    "ID", "Código", "Título", "Origen", "Área", "Severidad",
+                    "ID", "Código", "Título", "Descripción", "Origen", "Área", "Severidad",
                     "Estado", "Detectado por", "Responsable", "Fecha detección",
                     "Fecha compromiso", "Causa raíz", "Fecha cierre",
                 ],
             )
-            st.dataframe(df_nc, use_container_width=True, hide_index=True)
+
+            colf1, colf2, colf3 = st.columns(3)
+            filtro_estado_nc = colf1.selectbox("Filtrar por estado", ["Todos"] + sorted(df_nc["Estado"].dropna().unique().tolist()), key="filtro_estado_nc")
+            filtro_area_nc = colf2.selectbox("Filtrar por área", ["Todos"] + sorted(df_nc["Área"].dropna().unique().tolist()), key="filtro_area_nc")
+            filtro_responsable_nc = colf3.selectbox("Filtrar por responsable", ["Todos"] + sorted(df_nc["Responsable"].dropna().unique().tolist()), key="filtro_responsable_nc")
+
+            df_nc_filtrado = filtrar_dataframe(
+                df_nc,
+                {
+                    "Estado": filtro_estado_nc,
+                    "Área": filtro_area_nc,
+                    "Responsable": filtro_responsable_nc,
+                },
+            )
+            st.dataframe(df_nc_filtrado, use_container_width=True, hide_index=True)
         else:
             st.info("Todavía no hay no conformidades registradas.")
+
+        tarjeta_seccion(
+            "Edición",
+            "Editar no conformidad",
+            "Permite corregir o completar datos base sin perder la trazabilidad, ya que cada edición entra en bitácora.",
+        )
+
+        if no_conformidades:
+            nc_por_label = {
+                f"{codigo} | {titulo}": {
+                    "id": id_nc,
+                    "codigo": codigo,
+                    "titulo": titulo,
+                    "descripcion": descripcion,
+                    "origen": origen,
+                    "area": area,
+                    "severidad": severidad,
+                    "estado": estado,
+                    "detectado_por": detectado_por,
+                    "responsable": responsable,
+                    "fecha_deteccion": fecha_deteccion,
+                    "fecha_compromiso": fecha_compromiso,
+                    "causa_raiz": causa_raiz,
+                    "fecha_cierre": fecha_cierre,
+                }
+                for id_nc, codigo, titulo, descripcion, origen, area, severidad, estado, detectado_por, responsable, fecha_deteccion, fecha_compromiso, causa_raiz, fecha_cierre
+                in no_conformidades
+            }
+
+            with st.form("form_editar_nc"):
+                seleccion_editar_nc = st.selectbox("No conformidad a editar", list(nc_por_label.keys()))
+                nc_actual = nc_por_label[seleccion_editar_nc]
+                col1, col2 = st.columns(2)
+                with col1:
+                    editar_titulo_nc = st.text_input("Título", value=nc_actual["titulo"], key="editar_titulo_nc")
+                    editar_origen_nc = st.selectbox("Origen", ["Auditoría", "Proceso", "Cliente", "Proveedor", "Interno"], index=["Auditoría", "Proceso", "Cliente", "Proveedor", "Interno"].index(nc_actual["origen"]), key="editar_origen_nc")
+                    editar_area_nc = st.text_input("Área", value=nc_actual["area"], key="editar_area_nc")
+                    editar_severidad_nc = st.selectbox("Severidad", ["Baja", "Media", "Alta", "Crítica"], index=["Baja", "Media", "Alta", "Crítica"].index(nc_actual["severidad"]), key="editar_severidad_nc")
+                    editar_detectado_por_nc = st.text_input("Detectado por", value=nc_actual["detectado_por"], key="editar_detectado_por_nc")
+                with col2:
+                    editar_responsable_nc = st.text_input("Responsable", value=nc_actual["responsable"], key="editar_responsable_nc")
+                    editar_fecha_deteccion_nc = st.text_input("Fecha detección", value=nc_actual["fecha_deteccion"], key="editar_fecha_deteccion_nc")
+                    editar_fecha_compromiso_nc = st.text_input("Fecha compromiso", value=nc_actual["fecha_compromiso"] or "", key="editar_fecha_compromiso_nc")
+                    editar_causa_raiz_nc = st.text_area("Causa raíz", value=nc_actual["causa_raiz"] or "", key="editar_causa_raiz_nc")
+                    editar_descripcion_nc = st.text_area("Descripción", value=nc_actual["descripcion"] or "", key="editar_descripcion_nc")
+                guardar_edicion_nc = st.form_submit_button("Guardar edición")
+
+            if guardar_edicion_nc:
+                try:
+                    actualizar_no_conformidad(
+                        {
+                            "id_no_conformidad": nc_actual["id"],
+                            "codigo": nc_actual["codigo"],
+                            "titulo": editar_titulo_nc.strip(),
+                            "descripcion": editar_descripcion_nc.strip(),
+                            "origen": editar_origen_nc,
+                            "area": editar_area_nc.strip(),
+                            "severidad": editar_severidad_nc,
+                            "detectado_por": editar_detectado_por_nc.strip(),
+                            "responsable": editar_responsable_nc.strip(),
+                            "fecha_deteccion": editar_fecha_deteccion_nc.strip(),
+                            "fecha_compromiso": editar_fecha_compromiso_nc.strip(),
+                            "causa_raiz": editar_causa_raiz_nc.strip(),
+                            "usuario_email": st.session_state.get("usuario_email", ""),
+                        }
+                    )
+                    st.success("No conformidad editada correctamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"No se pudo editar la no conformidad: {e}")
 
         tarjeta_seccion(
             "Estado",
@@ -898,15 +991,82 @@ def mostrar_calidad():
             df_acciones = pd.DataFrame(
                 acciones,
                 columns=[
-                    "ID acción", "ID NC", "Código NC", "Título", "Tipo",
+                    "ID acción", "ID NC", "Código NC", "Título", "Descripción", "Tipo",
                     "Responsable", "Estado", "Fecha inicio", "Fecha compromiso", "Fecha cierre",
                 ],
             )
-            st.dataframe(df_acciones, use_container_width=True, hide_index=True)
+            colf1, colf2, colf3 = st.columns(3)
+            filtro_estado_accion = colf1.selectbox("Filtrar acciones por estado", ["Todos"] + sorted(df_acciones["Estado"].dropna().unique().tolist()), key="filtro_estado_accion")
+            filtro_tipo_accion = colf2.selectbox("Filtrar por tipo", ["Todos"] + sorted(df_acciones["Tipo"].dropna().unique().tolist()), key="filtro_tipo_accion")
+            filtro_responsable_accion = colf3.selectbox("Filtrar por responsable", ["Todos"] + sorted(df_acciones["Responsable"].dropna().unique().tolist()), key="filtro_responsable_accion")
+            df_acciones_filtrado = filtrar_dataframe(
+                df_acciones,
+                {
+                    "Estado": filtro_estado_accion,
+                    "Tipo": filtro_tipo_accion,
+                    "Responsable": filtro_responsable_accion,
+                },
+            )
+            st.dataframe(df_acciones_filtrado, use_container_width=True, hide_index=True)
         else:
             st.info("Todavía no hay acciones registradas.")
 
         if acciones:
+            tarjeta_seccion(
+                "Edición",
+                "Editar acción",
+                "Ajusta título, responsable, fechas o descripción sin perder la trazabilidad en bitácora.",
+            )
+
+            acciones_por_label = {
+                f"{codigo_nc} | {titulo_accion}": {
+                    "id": id_accion,
+                    "codigo_nc": codigo_nc,
+                    "titulo": titulo_accion,
+                    "descripcion": descripcion_accion,
+                    "tipo_accion": tipo_accion,
+                    "responsable": responsable,
+                    "estado": estado,
+                    "fecha_inicio": fecha_inicio,
+                    "fecha_compromiso": fecha_compromiso,
+                    "fecha_cierre": fecha_cierre,
+                }
+                for id_accion, _, codigo_nc, titulo_accion, descripcion_accion, tipo_accion, responsable, estado, fecha_inicio, fecha_compromiso, fecha_cierre in acciones
+            }
+
+            with st.form("form_editar_accion"):
+                seleccion_editar_accion = st.selectbox("Acción a editar", list(acciones_por_label.keys()))
+                accion_actual = acciones_por_label[seleccion_editar_accion]
+                col1, col2 = st.columns(2)
+                with col1:
+                    editar_titulo_accion = st.text_input("Título", value=accion_actual["titulo"], key="editar_titulo_accion")
+                    editar_tipo_accion = st.selectbox("Tipo", ["Correctiva", "Preventiva", "Contención"], index=["Correctiva", "Preventiva", "Contención"].index(accion_actual["tipo_accion"]), key="editar_tipo_accion")
+                    editar_responsable_accion = st.text_input("Responsable", value=accion_actual["responsable"], key="editar_responsable_accion")
+                with col2:
+                    editar_fecha_inicio_accion = st.text_input("Fecha inicio", value=accion_actual["fecha_inicio"], key="editar_fecha_inicio_accion")
+                    editar_fecha_compromiso_accion = st.text_input("Fecha compromiso", value=accion_actual["fecha_compromiso"] or "", key="editar_fecha_compromiso_accion")
+                    editar_descripcion_accion = st.text_area("Descripción", value=accion_actual["descripcion"], key="editar_descripcion_accion")
+                guardar_edicion_accion = st.form_submit_button("Guardar edición de acción")
+
+            if guardar_edicion_accion:
+                try:
+                    actualizar_accion_calidad(
+                        {
+                            "id_accion": accion_actual["id"],
+                            "titulo": editar_titulo_accion.strip(),
+                            "descripcion": editar_descripcion_accion.strip(),
+                            "tipo_accion": editar_tipo_accion,
+                            "responsable": editar_responsable_accion.strip(),
+                            "fecha_inicio": editar_fecha_inicio_accion.strip(),
+                            "fecha_compromiso": editar_fecha_compromiso_accion.strip(),
+                            "usuario_email": st.session_state.get("usuario_email", ""),
+                        }
+                    )
+                    st.success("Acción editada correctamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"No se pudo editar la acción: {e}")
+
             tarjeta_seccion(
                 "Estado",
                 "Actualizar acción",
@@ -915,7 +1075,7 @@ def mostrar_calidad():
 
             opciones_accion = {
                 f"{codigo_nc} | {titulo_accion} | {estado}": id_accion
-                for id_accion, _, codigo_nc, titulo_accion, _, _, estado, *_ in acciones
+                for id_accion, _, codigo_nc, titulo_accion, _, _, _, estado, *_ in acciones
             }
 
             with st.form("form_estado_accion"):
@@ -1027,7 +1187,17 @@ def mostrar_calidad():
                 auditorias,
                 columns=["ID", "Código", "Título", "Área", "Auditor líder", "Fecha programada", "Estado", "Resultado"],
             )
-            st.dataframe(df_auditorias, use_container_width=True, hide_index=True)
+            colf1, colf2 = st.columns(2)
+            filtro_estado_auditoria = colf1.selectbox("Filtrar auditorías por estado", ["Todos"] + sorted(df_auditorias["Estado"].dropna().unique().tolist()), key="filtro_estado_auditoria")
+            filtro_area_auditoria = colf2.selectbox("Filtrar auditorías por área", ["Todos"] + sorted(df_auditorias["Área"].dropna().unique().tolist()), key="filtro_area_auditoria")
+            df_auditorias_filtrado = filtrar_dataframe(
+                df_auditorias,
+                {
+                    "Estado": filtro_estado_auditoria,
+                    "Área": filtro_area_auditoria,
+                },
+            )
+            st.dataframe(df_auditorias_filtrado, use_container_width=True, hide_index=True)
         else:
             st.info("Todavía no hay auditorías registradas.")
 
@@ -1104,7 +1274,7 @@ def mostrar_calidad():
                 df_nc = pd.DataFrame(
                     no_conformidades,
                     columns=[
-                        "ID", "Código", "Título", "Origen", "Área", "Severidad",
+                        "ID", "Código", "Título", "Descripción", "Origen", "Área", "Severidad",
                         "Estado", "Detectado por", "Responsable", "Fecha detección",
                         "Fecha compromiso", "Causa raíz", "Fecha cierre",
                     ],
@@ -1119,7 +1289,7 @@ def mostrar_calidad():
                 df_acciones = pd.DataFrame(
                     acciones,
                     columns=[
-                        "ID acción", "ID NC", "Código NC", "Título", "Tipo",
+                        "ID acción", "ID NC", "Código NC", "Título", "Descripción", "Tipo",
                         "Responsable", "Estado", "Fecha inicio", "Fecha compromiso", "Fecha cierre",
                     ],
                 )
@@ -1127,6 +1297,77 @@ def mostrar_calidad():
                 st.bar_chart(df_acciones["Estado"].value_counts())
             else:
                 st.info("Sin datos de acciones para graficar.")
+
+        st.write("### Tablero ejecutivo")
+        exec_col1, exec_col2 = st.columns(2)
+
+        with exec_col1:
+            if no_conformidades:
+                df_nc_exec = pd.DataFrame(
+                    no_conformidades,
+                    columns=[
+                        "ID", "Código", "Título", "Descripción", "Origen", "Área", "Severidad",
+                        "Estado", "Detectado por", "Responsable", "Fecha detección",
+                        "Fecha compromiso", "Causa raíz", "Fecha cierre",
+                    ],
+                )
+                st.write("#### No conformidades por área")
+                st.bar_chart(df_nc_exec["Área"].value_counts())
+            else:
+                st.info("Sin no conformidades para el tablero.")
+
+        with exec_col2:
+            if acciones:
+                df_acc_exec = pd.DataFrame(
+                    acciones,
+                    columns=[
+                        "ID acción", "ID NC", "Código NC", "Título", "Descripción", "Tipo",
+                        "Responsable", "Estado", "Fecha inicio", "Fecha compromiso", "Fecha cierre",
+                    ],
+                )
+                st.write("#### Acciones por responsable")
+                st.bar_chart(df_acc_exec["Responsable"].value_counts())
+            else:
+                st.info("Sin acciones para el tablero.")
+
+        if acciones:
+            df_acc_exec = pd.DataFrame(
+                acciones,
+                columns=[
+                    "ID acción", "ID NC", "Código NC", "Título", "Descripción", "Tipo",
+                    "Responsable", "Estado", "Fecha inicio", "Fecha compromiso", "Fecha cierre",
+                ],
+            )
+            df_acc_exec["Fecha compromiso"] = pd.to_datetime(df_acc_exec["Fecha compromiso"], errors="coerce")
+            vencidas = df_acc_exec[
+                (df_acc_exec["Estado"] != "Cerrada")
+                & (df_acc_exec["Fecha compromiso"].notna())
+                & (df_acc_exec["Fecha compromiso"] < pd.Timestamp.today().normalize())
+            ]
+            st.write("#### Acciones vencidas prioritarias")
+            if not vencidas.empty:
+                st.dataframe(vencidas, use_container_width=True, hide_index=True)
+            else:
+                st.info("No hay acciones vencidas en este momento.")
+
+        if no_conformidades:
+            df_nc_exec = pd.DataFrame(
+                no_conformidades,
+                columns=[
+                    "ID", "Código", "Título", "Descripción", "Origen", "Área", "Severidad",
+                    "Estado", "Detectado por", "Responsable", "Fecha detección",
+                    "Fecha compromiso", "Causa raíz", "Fecha cierre",
+                ],
+            )
+            st.write("#### Hallazgos abiertos críticos o altos")
+            prioridades_nc = df_nc_exec[
+                (df_nc_exec["Estado"] != "Cerrada")
+                & (df_nc_exec["Severidad"].isin(["Alta", "Crítica"]))
+            ]
+            if not prioridades_nc.empty:
+                st.dataframe(prioridades_nc, use_container_width=True, hide_index=True)
+            else:
+                st.info("No hay no conformidades altas o críticas abiertas.")
 
         evidencia_total = []
         for id_nc, *_ in no_conformidades:
