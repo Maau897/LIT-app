@@ -19,12 +19,19 @@ from logic import (
     aprobar_usuario,
     autenticar_usuario,
     buscar_voluntario_por_id,
+    contar_acciones_abiertas,
+    contar_acciones_vencidas,
+    contar_no_conformidades_abiertas,
     contar_racks_activos,
     contar_visitas_pendientes,
     contar_voluntarios,
     exportar_a_excel,
+    listar_acciones_calidad,
+    listar_no_conformidades,
     obtener_ocupacion_racks,
     obtener_usuarios_pendientes,
+    registrar_accion_calidad,
+    registrar_no_conformidad,
     registrar_usuario,
     registrar_voluntario,
     ver_alicuotas_pbmc_voluntario,
@@ -632,16 +639,228 @@ def mostrar_proyecto_hospitalario():
         st.error(f"Error al leer Google Sheets: {e}")
 
 
+def mostrar_calidad():
+    st.markdown(
+        """
+        <div class="iner-hero">
+            <div class="iner-kicker">Sistema de calidad</div>
+            <h1 class="iner-title">Seguimiento de no conformidades y acciones</h1>
+            <p class="iner-copy">Espacio operativo para apoyar la trazabilidad requerida en validación ISO 9001 dentro de la misma plataforma.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("No conformidades abiertas", contar_no_conformidades_abiertas())
+    with col2:
+        st.metric("Acciones abiertas", contar_acciones_abiertas())
+    with col3:
+        st.metric("Acciones vencidas", contar_acciones_vencidas())
+
+    tab1, tab2, tab3 = st.tabs(["No conformidades", "Acciones", "Seguimiento"])
+
+    with tab1:
+        tarjeta_seccion(
+            "Registro",
+            "Nueva no conformidad",
+            "Documenta hallazgos, desviaciones, incidentes o incumplimientos con responsable y fecha compromiso.",
+        )
+
+        with st.form("form_no_conformidad", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+
+            with col1:
+                codigo = st.text_input("Código", placeholder="NC-2026-001")
+                titulo = st.text_input("Título")
+                origen = st.selectbox("Origen", ["Auditoría", "Proceso", "Cliente", "Proveedor", "Interno"])
+                area = st.text_input("Área o proceso")
+                severidad = st.selectbox("Severidad", ["Baja", "Media", "Alta", "Crítica"])
+                fecha_deteccion = st.date_input("Fecha de detección")
+
+            with col2:
+                detectado_por = st.text_input("Detectado por")
+                responsable = st.text_input("Responsable")
+                fecha_compromiso = st.date_input("Fecha compromiso")
+                descripcion = st.text_area("Descripción")
+                causa_raiz = st.text_area("Causa raíz")
+
+            enviado_nc = st.form_submit_button("Guardar no conformidad")
+
+        if enviado_nc:
+            datos_nc = {
+                "codigo": codigo.strip(),
+                "titulo": titulo.strip(),
+                "descripcion": descripcion.strip(),
+                "origen": origen,
+                "area": area.strip(),
+                "severidad": severidad,
+                "detectado_por": detectado_por.strip(),
+                "responsable": responsable.strip(),
+                "fecha_deteccion": str(fecha_deteccion),
+                "fecha_compromiso": str(fecha_compromiso),
+                "causa_raiz": causa_raiz.strip(),
+            }
+
+            campos_requeridos = [
+                "codigo",
+                "titulo",
+                "descripcion",
+                "area",
+                "detectado_por",
+                "responsable",
+            ]
+
+            if any(not datos_nc[campo] for campo in campos_requeridos):
+                st.warning("Completa todos los campos obligatorios de la no conformidad.")
+            else:
+                try:
+                    registrar_no_conformidad(datos_nc)
+                    st.success("No conformidad registrada correctamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"No se pudo registrar la no conformidad: {e}")
+
+        no_conformidades = listar_no_conformidades()
+        st.subheader("No conformidades registradas")
+
+        if no_conformidades:
+            df_nc = pd.DataFrame(
+                no_conformidades,
+                columns=[
+                    "ID", "Código", "Título", "Origen", "Área", "Severidad",
+                    "Estado", "Detectado por", "Responsable", "Fecha detección",
+                    "Fecha compromiso", "Causa raíz", "Fecha cierre",
+                ],
+            )
+            st.dataframe(df_nc, use_container_width=True, hide_index=True)
+        else:
+            st.info("Todavía no hay no conformidades registradas.")
+
+    with tab2:
+        tarjeta_seccion(
+            "Acción",
+            "Nueva acción correctiva o preventiva",
+            "Cada acción queda ligada a una no conformidad para mantener trazabilidad y seguimiento.",
+        )
+
+        no_conformidades = listar_no_conformidades()
+        opciones_nc = {
+            f"{codigo} | {titulo}": id_nc
+            for id_nc, codigo, titulo, *_ in no_conformidades
+        }
+
+        if not opciones_nc:
+            st.info("Primero registra una no conformidad para poder asociar acciones.")
+        else:
+            with st.form("form_accion_calidad", clear_on_submit=True):
+                referencia_nc = st.selectbox("No conformidad asociada", list(opciones_nc.keys()))
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    titulo_accion = st.text_input("Título de la acción")
+                    tipo_accion = st.selectbox("Tipo de acción", ["Correctiva", "Preventiva", "Contención"])
+                    responsable_accion = st.text_input("Responsable")
+
+                with col2:
+                    fecha_inicio = st.date_input("Fecha de inicio")
+                    fecha_compromiso_accion = st.date_input("Fecha compromiso", key="fecha_compromiso_accion")
+                    descripcion_accion = st.text_area("Descripción de la acción")
+
+                enviada_accion = st.form_submit_button("Guardar acción")
+
+            if enviada_accion:
+                datos_accion = {
+                    "id_no_conformidad": opciones_nc[referencia_nc],
+                    "titulo": titulo_accion.strip(),
+                    "descripcion": descripcion_accion.strip(),
+                    "tipo_accion": tipo_accion,
+                    "responsable": responsable_accion.strip(),
+                    "fecha_inicio": str(fecha_inicio),
+                    "fecha_compromiso": str(fecha_compromiso_accion),
+                }
+
+                campos_requeridos = ["titulo", "descripcion", "responsable"]
+                if any(not datos_accion[campo] for campo in campos_requeridos):
+                    st.warning("Completa todos los campos obligatorios de la acción.")
+                else:
+                    try:
+                        registrar_accion_calidad(datos_accion)
+                        st.success("Acción registrada correctamente.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"No se pudo registrar la acción: {e}")
+
+        acciones = listar_acciones_calidad()
+        st.subheader("Acciones registradas")
+
+        if acciones:
+            df_acciones = pd.DataFrame(
+                acciones,
+                columns=[
+                    "ID acción", "ID NC", "Código NC", "Título", "Tipo",
+                    "Responsable", "Estado", "Fecha inicio", "Fecha compromiso", "Fecha cierre",
+                ],
+            )
+            st.dataframe(df_acciones, use_container_width=True, hide_index=True)
+        else:
+            st.info("Todavía no hay acciones registradas.")
+
+    with tab3:
+        tarjeta_seccion(
+            "Control",
+            "Vista de seguimiento",
+            "Resumen rápido para revisar carga operativa, prioridades y trazabilidad del sistema de calidad.",
+        )
+
+        no_conformidades = listar_no_conformidades()
+        acciones = listar_acciones_calidad()
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if no_conformidades:
+                df_nc = pd.DataFrame(
+                    no_conformidades,
+                    columns=[
+                        "ID", "Código", "Título", "Origen", "Área", "Severidad",
+                        "Estado", "Detectado por", "Responsable", "Fecha detección",
+                        "Fecha compromiso", "Causa raíz", "Fecha cierre",
+                    ],
+                )
+                st.write("### Distribución por severidad")
+                st.bar_chart(df_nc["Severidad"].value_counts())
+            else:
+                st.info("Sin datos de no conformidades para graficar.")
+
+        with col2:
+            if acciones:
+                df_acciones = pd.DataFrame(
+                    acciones,
+                    columns=[
+                        "ID acción", "ID NC", "Código NC", "Título", "Tipo",
+                        "Responsable", "Estado", "Fecha inicio", "Fecha compromiso", "Fecha cierre",
+                    ],
+                )
+                st.write("### Distribución por estado de acciones")
+                st.bar_chart(df_acciones["Estado"].value_counts())
+            else:
+                st.info("Sin datos de acciones para graficar.")
+
+
 st.sidebar.title("Navegación")
 seccion = st.sidebar.radio(
     "Selecciona un módulo",
-    ["C23-25", "B37-25"],
+    ["C23-25", "B37-25", "Calidad"],
 )
 
 if seccion == "C23-25":
     mostrar_biobanco()
 elif seccion == "B37-25":
     mostrar_proyecto_hospitalario()
+elif seccion == "Calidad":
+    mostrar_calidad()
 
 st.sidebar.write(f"Sesión: {st.session_state.get('usuario_email', '')}")
 if st.session_state.get("es_admin", False):
