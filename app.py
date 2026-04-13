@@ -1,4 +1,5 @@
-﻿import pandas as pd
+﻿from io import BytesIO
+import pandas as pd
 import streamlit as st
 
 from database import crear_tablas
@@ -6,6 +7,7 @@ from google_sheets import (
     actualizar_campos_por_clave,
     buscar_fila_por_clave,
     construir_tabla_resumen_pacientes,
+    construir_tabla_tomas_pendientes,
     leer_sheet_como_dataframe,
     obtener_columnas_por_toma,
     obtener_fila_como_diccionario,
@@ -453,6 +455,25 @@ def mostrar_proyecto_hospitalario():
             else:
                 st.info("No se encontraron registros de influenza en observaciones.")
 
+        st.subheader("Tomas pendientes del día")
+        df_tomas_pendientes = construir_tabla_tomas_pendientes(df_sheet)
+
+        if not df_tomas_pendientes.empty:
+            st.dataframe(df_tomas_pendientes, use_container_width=True)
+
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                df_tomas_pendientes.to_excel(writer, sheet_name="Tomas pendientes", index=False)
+
+            st.download_button(
+                label="Descargar tomas pendientes en Excel",
+                data=buffer.getvalue(),
+                file_name="tomas_pendientes_lit.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        else:
+            st.info("No se encontraron tomas pendientes en columnas de ingreso a LIT.")
+
         st.subheader("Datos completos del Google Sheet")
         st.dataframe(df_sheet, use_container_width=True)
 
@@ -497,3 +518,4 @@ if st.sidebar.button("Cerrar sesión"):
     st.session_state["usuario_email"] = ""
     st.session_state["es_admin"] = False
     st.rerun()
+

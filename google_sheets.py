@@ -223,6 +223,58 @@ def _buscar_columna(df, nombre_objetivo):
     return None
 
 
+def _extraer_toma_de_columna(nombre_columna):
+    match = re.match(r"^T(\d+)", _normalizar_nombre_columna(nombre_columna))
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _es_columna_ingreso_lit(nombre_columna):
+    nombre = _normalizar_nombre_columna(nombre_columna)
+    toma = _extraer_toma_de_columna(nombre)
+
+    return (
+        toma is not None
+        and "INGRESO" in nombre
+        and "LIT" in nombre
+    )
+
+
+def _es_columna_folio_lab_clinico(nombre_columna):
+    nombre = _normalizar_nombre_columna(nombre_columna)
+    toma = _extraer_toma_de_columna(nombre)
+
+    return (
+        toma is not None
+        and "FOLIO" in nombre
+        and "LAB" in nombre
+        and "CLIN" in nombre
+    )
+
+
+def _obtener_columnas_ingreso_lit(df):
+    columnas = {}
+
+    for columna in df.columns:
+        if _es_columna_ingreso_lit(columna):
+            toma = _extraer_toma_de_columna(columna)
+            columnas[toma] = columna
+
+    return columnas
+
+
+def _obtener_columnas_folio_lab_clinico(df):
+    columnas = {}
+
+    for columna in df.columns:
+        if _es_columna_folio_lab_clinico(columna):
+            toma = _extraer_toma_de_columna(columna)
+            columnas[toma] = columna
+
+    return columnas
+
+
 def construir_tabla_resumen_pacientes(df):
     df = df.copy()
     tomas_disponibles = obtener_tomas_disponibles(df)
@@ -253,6 +305,36 @@ def construir_tabla_resumen_pacientes(df):
         })
 
     return pd.DataFrame(resumen)
+
+
+def construir_tabla_tomas_pendientes(df):
+    df = df.copy()
+    columna_nombre = _buscar_columna(df, "NOMBRE COMPLETO")
+    columna_observaciones = _buscar_columna(df, "OBSERVACIONES")
+    columna_clave_laboratorio = _buscar_columna(df, "CLAVE DE LABORATORIO")
+    columnas_ingreso_lit = _obtener_columnas_ingreso_lit(df)
+    columnas_folio_lab = _obtener_columnas_folio_lab_clinico(df)
+
+    pendientes = []
+
+    for _, fila in df.iterrows():
+        for toma, columna_ingreso in sorted(columnas_ingreso_lit.items()):
+            valor_ingreso = str(fila.get(columna_ingreso, "")).strip().upper()
+
+            if valor_ingreso != "PENDIENTE":
+                continue
+
+            columna_folio = columnas_folio_lab.get(toma)
+
+            pendientes.append({
+                "FOLIO LAB CLINICO": fila.get(columna_folio, "") if columna_folio else "",
+                "NOMBRE COMPLETO": fila.get(columna_nombre, "") if columna_nombre else "",
+                "OBSERVACIONES": fila.get(columna_observaciones, "") if columna_observaciones else "",
+                "TOMA PENDIENTE": f"T{toma}",
+                "CLAVE DE LABORATORIO": fila.get(columna_clave_laboratorio, "") if columna_clave_laboratorio else "",
+            })
+
+    return pd.DataFrame(pendientes)
 
 
 def clasificar_influenza_observaciones(texto):
