@@ -2,6 +2,7 @@ import sqlite3
 from pathlib import Path
 
 DB_NAME = Path(__file__).resolve().parent / "iner_voluntarios.db"
+EVIDENCIAS_DIR = Path(__file__).resolve().parent / "evidencias_calidad"
 
 
 def conectar_db():
@@ -10,6 +11,7 @@ def conectar_db():
     return conn
 
 def crear_tablas():
+    EVIDENCIAS_DIR.mkdir(exist_ok=True)
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -134,6 +136,50 @@ def crear_tablas():
         verificacion_eficacia TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (id_no_conformidad) REFERENCES calidad_no_conformidades(id_no_conformidad)
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS calidad_evidencias (
+        id_evidencia INTEGER PRIMARY KEY AUTOINCREMENT,
+        tipo_entidad TEXT NOT NULL,
+        id_entidad INTEGER NOT NULL,
+        nombre_archivo TEXT NOT NULL,
+        ruta_archivo TEXT NOT NULL,
+        descripcion TEXT,
+        subido_por TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS calidad_auditorias (
+        id_auditoria INTEGER PRIMARY KEY AUTOINCREMENT,
+        codigo TEXT UNIQUE NOT NULL,
+        titulo TEXT NOT NULL,
+        area TEXT NOT NULL,
+        auditor_lider TEXT NOT NULL,
+        fecha_programada TEXT NOT NULL,
+        alcance TEXT,
+        criterios TEXT,
+        estado TEXT NOT NULL DEFAULT 'Programada',
+        resultado TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS calidad_auditoria_hallazgos (
+        id_hallazgo INTEGER PRIMARY KEY AUTOINCREMENT,
+        id_auditoria INTEGER NOT NULL,
+        referencia TEXT NOT NULL,
+        descripcion TEXT NOT NULL,
+        severidad TEXT NOT NULL,
+        estado TEXT NOT NULL DEFAULT 'Abierto',
+        responsable TEXT,
+        fecha_compromiso TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (id_auditoria) REFERENCES calidad_auditorias(id_auditoria)
     )
     """)
 
