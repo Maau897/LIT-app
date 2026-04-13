@@ -97,6 +97,46 @@ def crear_tablas():
         fecha_registro TEXT DEFAULT CURRENT_TIMESTAMP
     )
     """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS calidad_no_conformidades (
+        id_no_conformidad INTEGER PRIMARY KEY AUTOINCREMENT,
+        codigo TEXT UNIQUE NOT NULL,
+        titulo TEXT NOT NULL,
+        descripcion TEXT NOT NULL,
+        origen TEXT NOT NULL,
+        area TEXT NOT NULL,
+        severidad TEXT NOT NULL,
+        estado TEXT NOT NULL DEFAULT 'Abierta',
+        detectado_por TEXT NOT NULL,
+        responsable TEXT NOT NULL,
+        fecha_deteccion TEXT NOT NULL,
+        fecha_compromiso TEXT,
+        causa_raiz TEXT,
+        verificacion_cierre TEXT,
+        fecha_cierre TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS calidad_acciones (
+        id_accion INTEGER PRIMARY KEY AUTOINCREMENT,
+        id_no_conformidad INTEGER NOT NULL,
+        titulo TEXT NOT NULL,
+        descripcion TEXT NOT NULL,
+        tipo_accion TEXT NOT NULL,
+        responsable TEXT NOT NULL,
+        estado TEXT NOT NULL DEFAULT 'Abierta',
+        fecha_inicio TEXT NOT NULL,
+        fecha_compromiso TEXT,
+        fecha_cierre TEXT,
+        verificacion_eficacia TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (id_no_conformidad) REFERENCES calidad_no_conformidades(id_no_conformidad)
+    )
+    """)
+
     conn.commit()
     conn.close()
     print("Base de datos y tablas creadas correctamente.")

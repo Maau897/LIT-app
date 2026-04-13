@@ -657,3 +657,147 @@ def crear_admin_inicial(email: str, password: str):
 
     conn.commit()
     conn.close()
+
+
+def registrar_no_conformidad(datos):
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO calidad_no_conformidades (
+            codigo, titulo, descripcion, origen, area, severidad,
+            estado, detectado_por, responsable, fecha_deteccion,
+            fecha_compromiso, causa_raiz
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        datos["codigo"],
+        datos["titulo"],
+        datos["descripcion"],
+        datos["origen"],
+        datos["area"],
+        datos["severidad"],
+        datos.get("estado", "Abierta"),
+        datos["detectado_por"],
+        datos["responsable"],
+        datos["fecha_deteccion"],
+        datos.get("fecha_compromiso"),
+        datos.get("causa_raiz"),
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def registrar_accion_calidad(datos):
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO calidad_acciones (
+            id_no_conformidad, titulo, descripcion, tipo_accion,
+            responsable, estado, fecha_inicio, fecha_compromiso
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        datos["id_no_conformidad"],
+        datos["titulo"],
+        datos["descripcion"],
+        datos["tipo_accion"],
+        datos["responsable"],
+        datos.get("estado", "Abierta"),
+        datos["fecha_inicio"],
+        datos.get("fecha_compromiso"),
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def listar_no_conformidades():
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            id_no_conformidad, codigo, titulo, origen, area, severidad,
+            estado, detectado_por, responsable, fecha_deteccion,
+            fecha_compromiso, causa_raiz, fecha_cierre
+        FROM calidad_no_conformidades
+        ORDER BY datetime(created_at) DESC, id_no_conformidad DESC
+    """)
+
+    resultados = cursor.fetchall()
+    conn.close()
+    return resultados
+
+
+def listar_acciones_calidad():
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            a.id_accion,
+            a.id_no_conformidad,
+            nc.codigo,
+            a.titulo,
+            a.tipo_accion,
+            a.responsable,
+            a.estado,
+            a.fecha_inicio,
+            a.fecha_compromiso,
+            a.fecha_cierre
+        FROM calidad_acciones a
+        INNER JOIN calidad_no_conformidades nc
+            ON nc.id_no_conformidad = a.id_no_conformidad
+        ORDER BY datetime(a.created_at) DESC, a.id_accion DESC
+    """)
+
+    resultados = cursor.fetchall()
+    conn.close()
+    return resultados
+
+
+def contar_no_conformidades_abiertas():
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT COUNT(*)
+        FROM calidad_no_conformidades
+        WHERE estado != 'Cerrada'
+    """)
+    total = cursor.fetchone()[0]
+    conn.close()
+    return total
+
+
+def contar_acciones_abiertas():
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT COUNT(*)
+        FROM calidad_acciones
+        WHERE estado != 'Cerrada'
+    """)
+    total = cursor.fetchone()[0]
+    conn.close()
+    return total
+
+
+def contar_acciones_vencidas():
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT COUNT(*)
+        FROM calidad_acciones
+        WHERE fecha_compromiso IS NOT NULL
+          AND date(fecha_compromiso) < date('now')
+          AND estado != 'Cerrada'
+    """)
+    total = cursor.fetchone()[0]
+    conn.close()
+    return total
