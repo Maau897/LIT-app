@@ -740,13 +740,95 @@ def registrar_accion_calidad(datos):
     conn.close()
 
 
+def actualizar_no_conformidad(datos):
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE calidad_no_conformidades
+        SET titulo = ?,
+            descripcion = ?,
+            origen = ?,
+            area = ?,
+            severidad = ?,
+            detectado_por = ?,
+            responsable = ?,
+            fecha_deteccion = ?,
+            fecha_compromiso = ?,
+            causa_raiz = ?
+        WHERE id_no_conformidad = ?
+    """, (
+        datos["titulo"],
+        datos["descripcion"],
+        datos["origen"],
+        datos["area"],
+        datos["severidad"],
+        datos["detectado_por"],
+        datos["responsable"],
+        datos["fecha_deteccion"],
+        datos["fecha_compromiso"],
+        datos.get("causa_raiz"),
+        datos["id_no_conformidad"],
+    ))
+
+    if datos.get("usuario_email"):
+        _registrar_evento_calidad_cursor(
+            cursor,
+            entidad_tipo="no_conformidad",
+            entidad_id=datos["id_no_conformidad"],
+            accion="Edición",
+            detalle=f"Se actualizaron los datos base de la no conformidad {datos['codigo']}.",
+            usuario_email=datos["usuario_email"],
+        )
+
+    conn.commit()
+    conn.close()
+
+
+def actualizar_accion_calidad(datos):
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE calidad_acciones
+        SET titulo = ?,
+            descripcion = ?,
+            tipo_accion = ?,
+            responsable = ?,
+            fecha_inicio = ?,
+            fecha_compromiso = ?
+        WHERE id_accion = ?
+    """, (
+        datos["titulo"],
+        datos["descripcion"],
+        datos["tipo_accion"],
+        datos["responsable"],
+        datos["fecha_inicio"],
+        datos["fecha_compromiso"],
+        datos["id_accion"],
+    ))
+
+    if datos.get("usuario_email"):
+        _registrar_evento_calidad_cursor(
+            cursor,
+            entidad_tipo="accion",
+            entidad_id=datos["id_accion"],
+            accion="Edición",
+            detalle=f"Se actualizaron los datos base de la acción '{datos['titulo']}'.",
+            usuario_email=datos["usuario_email"],
+        )
+
+    conn.commit()
+    conn.close()
+
+
 def listar_no_conformidades():
     conn = conectar_db()
     cursor = conn.cursor()
 
     cursor.execute("""
         SELECT
-            id_no_conformidad, codigo, titulo, origen, area, severidad,
+            id_no_conformidad, codigo, titulo, descripcion, origen, area, severidad,
             estado, detectado_por, responsable, fecha_deteccion,
             fecha_compromiso, causa_raiz, fecha_cierre
         FROM calidad_no_conformidades
@@ -768,6 +850,7 @@ def listar_acciones_calidad():
             a.id_no_conformidad,
             nc.codigo,
             a.titulo,
+            a.descripcion,
             a.tipo_accion,
             a.responsable,
             a.estado,
