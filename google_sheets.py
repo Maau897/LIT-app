@@ -1,4 +1,5 @@
 ﻿import re
+import unicodedata
 
 import gspread
 import pandas as pd
@@ -205,9 +206,27 @@ def obtener_tomas_disponibles(df):
     return sorted(tomas)
 
 
+def _normalizar_nombre_columna(nombre):
+    texto = unicodedata.normalize("NFKD", str(nombre))
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    texto = re.sub(r"\s+", " ", texto.strip().upper())
+    return texto
+
+
+def _buscar_columna(df, nombre_objetivo):
+    objetivo = _normalizar_nombre_columna(nombre_objetivo)
+
+    for columna in df.columns:
+        if _normalizar_nombre_columna(columna) == objetivo:
+            return columna
+
+    return None
+
+
 def construir_tabla_resumen_pacientes(df):
     df = df.copy()
     tomas_disponibles = obtener_tomas_disponibles(df)
+    columna_observaciones = _buscar_columna(df, "OBSERVACIONES")
     resumen = []
 
     for _, fila in df.iterrows():
@@ -229,7 +248,7 @@ def construir_tabla_resumen_pacientes(df):
             "NOMBRE COMPLETO": fila.get("NOMBRE COMPLETO", ""),
             "DIAGNÓSTICO": fila.get("DIAGNÓSTICO", ""),
             "CLAVE DE LABORATORIO": fila.get("CLAVE DE LABORATORIO", ""),
-            "OBSERVACIONES": fila.get("OBSERVACIONES", ""),
+            "OBSERVACIONES": fila.get(columna_observaciones, "") if columna_observaciones else "",
             "TOTAL TOMAS": total_tomas,
         })
 
@@ -286,10 +305,7 @@ def clasificar_influenza_observaciones(texto):
 
 
 def _obtener_columna_observaciones(df):
-    for nombre in ("OBSERVACIONES", "Observaciones", "observaciones"):
-        if nombre in df.columns:
-            return nombre
-    return None
+    return _buscar_columna(df, "OBSERVACIONES")
 
 
 def preparar_resumen_influenza_observaciones(df):
