@@ -19,6 +19,7 @@ from logic import (
     aprobar_usuario,
     aprobar_cierre_accion,
     aprobar_cierre_no_conformidad,
+    aprobar_version_documento,
     actualizar_estado_accion_calidad,
     actualizar_accion_calidad,
     actualizar_estado_no_conformidad,
@@ -36,15 +37,19 @@ from logic import (
     listar_auditorias_calidad,
     listar_acciones_calidad,
     listar_bitacora_calidad,
+    listar_documentos_calidad,
     listar_evidencias_calidad,
     listar_hallazgos_auditoria,
     listar_no_conformidades,
+    listar_versiones_documento,
     obtener_ocupacion_racks,
     obtener_usuarios_pendientes,
     registrar_auditoria_calidad,
     registrar_accion_calidad,
+    registrar_documento_calidad,
     registrar_hallazgo_auditoria,
     registrar_no_conformidad,
+    registrar_version_documento,
     registrar_usuario,
     registrar_voluntario,
     ver_alicuotas_pbmc_voluntario,
@@ -784,7 +789,7 @@ def mostrar_calidad():
     with col3:
         st.metric("Acciones vencidas", contar_acciones_vencidas())
 
-    tab1, tab2, tab3, tab4 = st.tabs(["No conformidades", "Acciones", "Auditorías", "Seguimiento"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["No conformidades", "Acciones", "Auditorías", "Control documental", "Seguimiento"])
 
     with tab1:
         tarjeta_seccion(
@@ -1427,6 +1432,187 @@ def mostrar_calidad():
             st.dataframe(df_hallazgos, use_container_width=True, hide_index=True)
 
     with tab4:
+        tarjeta_seccion(
+            "Documento",
+            "Control documental",
+            "Gestiona documentos, versiones, vigencia y aprobaciones dentro del sistema de calidad.",
+        )
+
+        with st.form("form_documento", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                codigo_documento = st.text_input("Código de documento", placeholder="PROC-CAL-001")
+                nombre_documento = st.text_input("Nombre del documento")
+                proceso_documento = st.text_input("Proceso o área")
+            with col2:
+                tipo_documento = st.selectbox("Tipo de documento", ["Procedimiento", "Formato", "Instructivo", "Política", "Manual", "Registro"])
+                estado_documento = st.selectbox("Estado inicial", ["Borrador", "Vigente", "Obsoleto"])
+                observaciones_documento = st.text_area("Observaciones")
+            guardar_documento = st.form_submit_button("Guardar documento")
+
+        if guardar_documento:
+            datos_documento = {
+                "codigo": codigo_documento.strip(),
+                "nombre": nombre_documento.strip(),
+                "proceso_area": proceso_documento.strip(),
+                "tipo_documento": tipo_documento,
+                "estado": estado_documento,
+                "observaciones": observaciones_documento.strip(),
+                "usuario_email": st.session_state.get("usuario_email", ""),
+            }
+            if not datos_documento["codigo"] or not datos_documento["nombre"] or not datos_documento["proceso_area"]:
+                st.warning("Completa código, nombre y proceso o área del documento.")
+            else:
+                try:
+                    registrar_documento_calidad(datos_documento)
+                    st.success("Documento registrado correctamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"No se pudo registrar el documento: {e}")
+
+        documentos = listar_documentos_calidad()
+        st.subheader("Documentos controlados")
+
+        if documentos:
+            df_documentos = pd.DataFrame(
+                documentos,
+                columns=[
+                    "ID", "Código", "Nombre", "Proceso/Área", "Tipo",
+                    "Estado", "Versión actual", "Vigente desde", "Vigente hasta",
+                    "Aprobado por", "Fecha aprobación", "Observaciones",
+                ],
+            )
+            colf1, colf2, colf3 = st.columns(3)
+            filtro_estado_doc = colf1.selectbox("Filtrar documentos por estado", ["Todos"] + sorted(df_documentos["Estado"].dropna().unique().tolist()), key="filtro_estado_doc")
+            filtro_tipo_doc = colf2.selectbox("Filtrar por tipo", ["Todos"] + sorted(df_documentos["Tipo"].dropna().unique().tolist()), key="filtro_tipo_doc")
+            filtro_area_doc = colf3.selectbox("Filtrar por área", ["Todos"] + sorted(df_documentos["Proceso/Área"].dropna().unique().tolist()), key="filtro_area_doc")
+            df_documentos_filtrado = filtrar_dataframe(
+                df_documentos,
+                {
+                    "Estado": filtro_estado_doc,
+                    "Tipo": filtro_tipo_doc,
+                    "Proceso/Área": filtro_area_doc,
+                },
+            )
+            st.dataframe(df_documentos_filtrado, use_container_width=True, hide_index=True)
+        else:
+            st.info("Todavía no hay documentos controlados.")
+
+        if documentos:
+            documentos_por_label = {
+                f"{codigo} | {nombre}": id_documento
+                for id_documento, codigo, nombre, *_ in documentos
+            }
+
+            tarjeta_seccion(
+                "Versión",
+                "Registrar nueva versión documental",
+                "Sube una nueva versión, describe los cambios y conserva el archivo asociado.",
+            )
+
+            with st.form("form_version_documento", clear_on_submit=True):
+                seleccion_documento_version = st.selectbox("Documento", list(documentos_por_label.keys()))
+                version_documento = st.text_input("Versión", placeholder="1.0")
+                cambios_version = st.text_area("Resumen de cambios")
+                archivo_version = st.file_uploader("Archivo del documento", key="archivo_documento_version")
+                guardar_version_documento = st.form_submit_button("Guardar versión")
+
+            if guardar_version_documento:
+                try:
+                    registrar_version_documento(
+                        id_documento=documentos_por_label[seleccion_documento_version],
+                        version=version_documento.strip(),
+                        cambios_resumen=cambios_version.strip(),
+                        elaborado_por=st.session_state.get("usuario_email", ""),
+                        nombre_archivo_original=archivo_version.name if archivo_version else None,
+                        contenido_archivo=archivo_version.getvalue() if archivo_version else None,
+                    )
+                    st.success("Versión documental registrada correctamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"No se pudo registrar la versión: {e}")
+
+            tarjeta_seccion(
+                "Aprobación",
+                "Aprobar versión y vigencia",
+                "La aprobación formal marca la versión vigente y actualiza el estado del documento.",
+            )
+
+            with st.form("form_aprobar_version_documento"):
+                seleccion_documento_aprobacion = st.selectbox("Documento para aprobar", list(documentos_por_label.keys()), key="seleccion_documento_aprobacion")
+                id_doc_aprobar = documentos_por_label[seleccion_documento_aprobacion]
+                versiones_documento = listar_versiones_documento(id_doc_aprobar)
+                opciones_version = {
+                    f"{version} | {'Vigente' if es_vigente else 'Pendiente'}": id_version
+                    for id_version, version, _, _, _, _, _, _, es_vigente, _ in versiones_documento
+                }
+                seleccion_version = st.selectbox("Versión", list(opciones_version.keys())) if opciones_version else st.selectbox("Versión", ["Sin versiones"])
+                col1, col2 = st.columns(2)
+                with col1:
+                    vigente_desde_doc = st.date_input("Vigente desde", key="vigente_desde_doc")
+                with col2:
+                    vigente_hasta_doc = st.date_input("Vigente hasta", key="vigente_hasta_doc")
+                estado_aprobado_doc = st.selectbox("Estado del documento", ["Vigente", "Obsoleto"], key="estado_aprobado_doc")
+                aprobar_version_btn = st.form_submit_button("Aprobar versión documental")
+
+            if aprobar_version_btn:
+                if not opciones_version:
+                    st.warning("Primero registra una versión para poder aprobarla.")
+                else:
+                    try:
+                        aprobar_version_documento(
+                            id_documento=id_doc_aprobar,
+                            id_version=opciones_version[seleccion_version],
+                            aprobado_por=st.session_state.get("usuario_email", ""),
+                            vigente_desde=str(vigente_desde_doc),
+                            vigente_hasta=str(vigente_hasta_doc),
+                            estado_documento=estado_aprobado_doc,
+                            es_admin=st.session_state.get("es_admin", False),
+                        )
+                        st.success("Versión documental aprobada correctamente.")
+                        st.rerun()
+                    except PermissionError as e:
+                        st.warning(str(e))
+                    except Exception as e:
+                        st.error(f"No se pudo aprobar la versión documental: {e}")
+
+            st.write("### Versiones documentales")
+            tabla_versiones = []
+            for etiqueta, id_documento in documentos_por_label.items():
+                for id_version, version, nombre_archivo, ruta_archivo, cambios_resumen, elaborado_por, aprobado_por, fecha_aprobacion, es_vigente, created_at in listar_versiones_documento(id_documento):
+                    tabla_versiones.append(
+                        {
+                            "Documento": etiqueta,
+                            "Versión": version,
+                            "Archivo": nombre_archivo,
+                            "Cambios": cambios_resumen,
+                            "Elaborado por": elaborado_por,
+                            "Aprobado por": aprobado_por,
+                            "Fecha aprobación": fecha_aprobacion,
+                            "Vigente": "Sí" if es_vigente else "No",
+                            "Fecha registro": created_at,
+                        }
+                    )
+
+            if tabla_versiones:
+                st.dataframe(pd.DataFrame(tabla_versiones), use_container_width=True, hide_index=True)
+
+                st.write("### Descarga de versiones")
+                for etiqueta, id_documento in documentos_por_label.items():
+                    for id_version, version, nombre_archivo, ruta_archivo, _, _, _, _, es_vigente, _ in listar_versiones_documento(id_documento):
+                        if nombre_archivo and ruta_archivo:
+                            try:
+                                with open(ruta_archivo, "rb") as archivo:
+                                    st.download_button(
+                                        label=f"Descargar {etiqueta} v{version}{' (vigente)' if es_vigente else ''}",
+                                        data=archivo.read(),
+                                        file_name=nombre_archivo,
+                                        key=f"descarga_documento_{id_version}",
+                                    )
+                            except FileNotFoundError:
+                                st.warning(f"No se encontró el archivo de la versión {version} para {etiqueta}.")
+
+    with tab5:
         tarjeta_seccion(
             "Control",
             "Vista de seguimiento",
