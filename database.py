@@ -183,6 +183,18 @@ def crear_tablas():
     )
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS calidad_bitacora (
+        id_evento INTEGER PRIMARY KEY AUTOINCREMENT,
+        entidad_tipo TEXT NOT NULL,
+        entidad_id INTEGER,
+        accion TEXT NOT NULL,
+        detalle TEXT NOT NULL,
+        usuario_email TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     conn.commit()
     conn.close()
     print("Base de datos y tablas creadas correctamente.")
