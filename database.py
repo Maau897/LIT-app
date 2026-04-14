@@ -4,6 +4,7 @@ from pathlib import Path
 DB_NAME = Path(__file__).resolve().parent / "iner_voluntarios.db"
 EVIDENCIAS_DIR = Path(__file__).resolve().parent / "evidencias_calidad"
 DOCUMENTOS_DIR = Path(__file__).resolve().parent / "documentos_calidad"
+BACKUPS_DIR = Path(__file__).resolve().parent / "backups"
 
 
 def conectar_db():
@@ -21,6 +22,7 @@ def asegurar_columna(cursor, tabla, columna, definicion):
 def crear_tablas():
     EVIDENCIAS_DIR.mkdir(exist_ok=True)
     DOCUMENTOS_DIR.mkdir(exist_ok=True)
+    BACKUPS_DIR.mkdir(exist_ok=True)
     conn = conectar_db()
     cursor = conn.cursor()
 
