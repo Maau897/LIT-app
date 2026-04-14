@@ -105,6 +105,7 @@ def crear_tablas():
         password_hash TEXT NOT NULL,
         aprobado INTEGER DEFAULT 0,
         es_admin INTEGER DEFAULT 0,
+        rol TEXT DEFAULT 'captura',
         fecha_registro TEXT DEFAULT CURRENT_TIMESTAMP
     )
     """)
@@ -251,6 +252,7 @@ def crear_tablas():
     asegurar_columna(cursor, "calidad_acciones", "aprobado_por", "TEXT")
     asegurar_columna(cursor, "calidad_acciones", "fecha_aprobacion", "TEXT")
     asegurar_columna(cursor, "calidad_acciones", "comentario_final", "TEXT")
+    asegurar_columna(cursor, "usuarios", "rol", "TEXT DEFAULT 'captura'")
 
     conn.commit()
     conn.close()
