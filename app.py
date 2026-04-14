@@ -1,9 +1,12 @@
 ﻿from io import BytesIO
 import pandas as pd
+from datetime import datetime
 import streamlit as st
 from openpyxl.utils import get_column_letter
+from pathlib import Path
+import zipfile
 
-from database import crear_tablas
+from database import BACKUPS_DIR, DB_NAME, DOCUMENTOS_DIR, EVIDENCIAS_DIR, crear_tablas
 from google_sheets import (
     actualizar_campos_por_clave,
     buscar_fila_por_clave,
@@ -85,6 +88,29 @@ def tiene_rol(*roles):
 
 def mostrar_aviso_permiso(mensaje):
     st.info(f"Permiso requerido: {mensaje}")
+
+
+def crear_respaldo_sistema():
+    marca_tiempo = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ruta_zip = BACKUPS_DIR / f"iner_respaldo_{marca_tiempo}.zip"
+
+    with zipfile.ZipFile(ruta_zip, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
+        if DB_NAME.exists():
+            zip_file.write(DB_NAME, arcname=DB_NAME.name)
+
+        for carpeta in [EVIDENCIAS_DIR, DOCUMENTOS_DIR]:
+            if carpeta.exists():
+                for archivo in carpeta.rglob("*"):
+                    if archivo.is_file():
+                        zip_file.write(archivo, arcname=str(Path(carpeta.name) / archivo.relative_to(carpeta)))
+
+    return ruta_zip
+
+
+def listar_respaldos():
+    if not BACKUPS_DIR.exists():
+        return []
+    return sorted(BACKUPS_DIR.glob("*.zip"), key=lambda ruta: ruta.stat().st_mtime, reverse=True)
 
 
 def aplicar_estilos():
@@ -1223,7 +1249,7 @@ def mostrar_calidad():
     with col3:
         st.metric("Acciones vencidas", contar_acciones_vencidas())
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["No conformidades", "Acciones", "Auditorías", "Control documental", "Seguimiento", "Indicadores"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["No conformidades", "Acciones", "Auditorías", "Control documental", "Seguimiento", "Indicadores", "Respaldo"])
 
     with tab1:
         tarjeta_seccion(
@@ -2753,6 +2779,70 @@ def mostrar_calidad():
 
         st.write("### Resumen de indicadores")
         st.dataframe(tabla_indicadores, use_container_width=True, hide_index=True)
+
+    with tab7:
+        tarjeta_seccion(
+            "Backup",
+            "Respaldo y recuperación",
+            "Protege base, evidencias y documentos con paquetes descargables listos para resguardo.",
+        )
+
+        if tiene_rol("calidad"):
+            respaldos = listar_respaldos()
+            ultimo_respaldo = respaldos[0] if respaldos else None
+
+            info_col1, info_col2, info_col3 = st.columns(3)
+            with info_col1:
+                st.metric("Respaldos disponibles", len(respaldos))
+            with info_col2:
+                st.metric("Base actual", DB_NAME.name)
+            with info_col3:
+                st.metric(
+                    "Último respaldo",
+                    ultimo_respaldo.name if ultimo_respaldo else "Sin respaldo",
+                )
+
+            st.write(
+                "Este módulo empaqueta `iner_voluntarios.db`, `evidencias_calidad` y `documentos_calidad` "
+                "en un solo `.zip` dentro de la carpeta `backups`."
+            )
+
+            if st.button("Generar respaldo manual", use_container_width=True):
+                try:
+                    ruta_respaldo = crear_respaldo_sistema()
+                    st.success(f"Respaldo generado correctamente: {ruta_respaldo.name}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"No se pudo generar el respaldo: {e}")
+
+            respaldos = listar_respaldos()
+            if respaldos:
+                st.write("### Respaldos disponibles")
+                tabla_respaldos = []
+                for ruta in respaldos:
+                    tabla_respaldos.append(
+                        {
+                            "Archivo": ruta.name,
+                            "Fecha": datetime.fromtimestamp(ruta.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                            "Tamaño (KB)": round(ruta.stat().st_size / 1024, 1),
+                        }
+                    )
+                st.dataframe(pd.DataFrame(tabla_respaldos), use_container_width=True, hide_index=True)
+
+                st.write("### Descarga de respaldos")
+                for indice, ruta in enumerate(respaldos[:10], start=1):
+                    with open(ruta, "rb") as archivo_respaldo:
+                        st.download_button(
+                            label=f"Descargar respaldo {indice}: {ruta.name}",
+                            data=archivo_respaldo.read(),
+                            file_name=ruta.name,
+                            mime="application/zip",
+                            key=f"descarga_respaldo_{ruta.name}",
+                        )
+            else:
+                st.info("Todavía no hay respaldos generados.")
+        else:
+            mostrar_aviso_permiso("solo Calidad o Admin pueden generar y descargar respaldos del sistema.")
 
 
 st.sidebar.title("Navegación")
