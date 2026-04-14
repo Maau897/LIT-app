@@ -681,15 +681,42 @@ def generar_excel_ejecutivo(secciones):
 def generar_pdf_ejecutivo(resumen_lineas, secciones):
     try:
         from reportlab.lib import colors
-        from reportlab.lib.pagesizes import letter
-        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.pagesizes import landscape, letter
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import inch
         from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
     except ImportError as exc:
         raise RuntimeError("Instala reportlab para exportar a PDF.") from exc
 
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(letter),
+        leftMargin=0.45 * inch,
+        rightMargin=0.45 * inch,
+        topMargin=0.45 * inch,
+        bottomMargin=0.45 * inch,
+    )
     styles = getSampleStyleSheet()
+    estilo_celda = ParagraphStyle(
+        "CeldaPDF",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=7,
+        leading=9,
+        spaceAfter=0,
+        spaceBefore=0,
+    )
+    estilo_header = ParagraphStyle(
+        "HeaderPDF",
+        parent=styles["BodyText"],
+        fontName="Helvetica-Bold",
+        fontSize=7,
+        leading=9,
+        textColor=colors.HexColor("#16324f"),
+        spaceAfter=0,
+        spaceBefore=0,
+    )
     elementos = [Paragraph("Reporte ejecutivo de calidad", styles["Title"]), Spacer(1, 12)]
 
     for linea in resumen_lineas:
@@ -705,16 +732,47 @@ def generar_pdf_ejecutivo(resumen_lineas, secciones):
             continue
 
         df = df.head(15)
-        tabla_data = [df.columns.tolist()] + df.fillna("").astype(str).values.tolist()
-        tabla = Table(tabla_data, repeatRows=1)
+        df = df.fillna("").astype(str)
+
+        columnas = df.columns.tolist()
+        anchos_relativos = []
+        for columna in columnas:
+            largo_columna = len(str(columna))
+            largo_datos = df[columna].map(len).max() if not df.empty else 0
+            ancho = min(max(largo_columna, largo_datos, 10), 28)
+            anchos_relativos.append(ancho)
+
+        ancho_disponible = doc.width
+        suma_anchos = sum(anchos_relativos) or 1
+        col_widths = [(ancho / suma_anchos) * ancho_disponible for ancho in anchos_relativos]
+
+        ancho_minimo = 0.75 * inch
+        ancho_maximo = 2.1 * inch
+        col_widths = [min(max(ancho, ancho_minimo), ancho_maximo) for ancho in col_widths]
+
+        total_ajustado = sum(col_widths)
+        if total_ajustado > ancho_disponible:
+            factor = ancho_disponible / total_ajustado
+            col_widths = [ancho * factor for ancho in col_widths]
+
+        tabla_data = [
+            [Paragraph(str(columna), estilo_header) for columna in columnas]
+        ]
+        for fila in df.values.tolist():
+            tabla_data.append([Paragraph(str(valor), estilo_celda) for valor in fila])
+
+        tabla = Table(tabla_data, repeatRows=1, colWidths=col_widths)
         tabla.setStyle(
             TableStyle(
                 [
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d9edf2")),
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#16324f")),
                     ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d4de")),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
                     ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fbfc")]),
                 ]
             )
