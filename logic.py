@@ -570,16 +570,33 @@ def verificar_password(password: str, password_hash: str) -> bool:
     )
 
 
-def registrar_usuario(email: str, password: str):
+ROLES_CALIDAD = ["captura", "responsable", "auditor", "calidad", "admin"]
+
+
+def normalizar_rol(rol: str | None, es_admin: bool = False) -> str:
+    if es_admin:
+        return "admin"
+    rol_normalizado = (rol or "captura").strip().lower()
+    return rol_normalizado if rol_normalizado in ROLES_CALIDAD else "captura"
+
+
+def usuario_tiene_rol(rol_usuario: str | None, *roles_permitidos: str, es_admin: bool = False) -> bool:
+    rol_normalizado = normalizar_rol(rol_usuario, es_admin)
+    permitidos = {normalizar_rol(rol) for rol in roles_permitidos}
+    return rol_normalizado == "admin" or rol_normalizado in permitidos
+
+
+def registrar_usuario(email: str, password: str, rol: str = "captura"):
     conn = conectar_db()
     cursor = conn.cursor()
 
     password_hash = hash_password(password)
+    rol_normalizado = normalizar_rol(rol)
 
     cursor.execute("""
-        INSERT INTO usuarios (email, password_hash, aprobado, es_admin)
-        VALUES (?, ?, 0, 0)
-    """, (email.strip().lower(), password_hash))
+        INSERT INTO usuarios (email, password_hash, aprobado, es_admin, rol)
+        VALUES (?, ?, 0, 0, ?)
+    """, (email.strip().lower(), password_hash, rol_normalizado))
 
     conn.commit()
     conn.close()
@@ -590,7 +607,7 @@ def autenticar_usuario(email: str, password: str):
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT id_usuario, email, password_hash, aprobado, es_admin
+        SELECT id_usuario, email, password_hash, aprobado, es_admin, rol
         FROM usuarios
         WHERE email = ?
     """, (email.strip().lower(),))
@@ -601,7 +618,7 @@ def autenticar_usuario(email: str, password: str):
     if not usuario:
         return {"ok": False, "mensaje": "Usuario no encontrado."}
 
-    id_usuario, email_db, password_hash, aprobado, es_admin = usuario
+    id_usuario, email_db, password_hash, aprobado, es_admin, rol = usuario
 
     if not verificar_password(password, password_hash):
         return {"ok": False, "mensaje": "Contraseña incorrecta."}
@@ -613,7 +630,8 @@ def autenticar_usuario(email: str, password: str):
         "ok": True,
         "id_usuario": id_usuario,
         "email": email_db,
-        "es_admin": bool(es_admin)
+        "es_admin": bool(es_admin),
+        "rol": normalizar_rol(rol, bool(es_admin)),
     }
 
 
@@ -633,15 +651,49 @@ def obtener_usuarios_pendientes():
     return resultados
 
 
-def aprobar_usuario(id_usuario: int):
+def listar_usuarios():
     conn = conectar_db()
     cursor = conn.cursor()
 
     cursor.execute("""
+        SELECT id_usuario, email, aprobado, es_admin, rol, fecha_registro
+        FROM usuarios
+        ORDER BY es_admin DESC, aprobado DESC, email
+    """)
+
+    resultados = cursor.fetchall()
+    conn.close()
+    return resultados
+
+
+def aprobar_usuario(id_usuario: int, rol: str = "captura"):
+    conn = conectar_db()
+    cursor = conn.cursor()
+    rol_normalizado = normalizar_rol(rol)
+
+    cursor.execute("""
         UPDATE usuarios
-        SET aprobado = 1
+        SET aprobado = 1,
+            rol = ?,
+            es_admin = CASE WHEN ? = 'admin' THEN 1 ELSE es_admin END
         WHERE id_usuario = ?
-    """, (id_usuario,))
+    """, (rol_normalizado, rol_normalizado, id_usuario))
+
+    conn.commit()
+    conn.close()
+
+
+def actualizar_rol_usuario(id_usuario: int, rol: str):
+    conn = conectar_db()
+    cursor = conn.cursor()
+    rol_normalizado = normalizar_rol(rol, rol == "admin")
+
+    cursor.execute("""
+        UPDATE usuarios
+        SET rol = ?,
+            es_admin = CASE WHEN ? = 'admin' THEN 1 ELSE 0 END
+        WHERE id_usuario = ?
+    """, (rol_normalizado, rol_normalizado, id_usuario))
 
     conn.commit()
     conn.close()
@@ -653,9 +705,16 @@ def crear_admin_inicial(email: str, password: str):
     password_hash = hash_password(password)
 
     cursor.execute("""
-        INSERT OR IGNORE INTO usuarios (email, password_hash, aprobado, es_admin)
-        VALUES (?, ?, 1, 1)
+        INSERT OR IGNORE INTO usuarios (email, password_hash, aprobado, es_admin, rol)
+        VALUES (?, ?, 1, 1, 'admin')
     """, (email.strip().lower(), password_hash))
+
+    cursor.execute("""
+        UPDATE usuarios
+        SET es_admin = 1,
+            rol = 'admin'
+        WHERE email = ?
+    """, (email.strip().lower(),))
 
     conn.commit()
     conn.close()
@@ -960,10 +1019,11 @@ def actualizar_estado_no_conformidad(
     causa_raiz: str | None = None,
     verificacion_cierre: str | None = None,
     es_admin: bool = False,
+    rol_usuario: str | None = None,
     usuario_email: str | None = None,
 ):
-    if nuevo_estado == "Cerrada" and not es_admin:
-        raise PermissionError("Solo un administrador puede cerrar una no conformidad.")
+    if nuevo_estado == "Cerrada" and not usuario_tiene_rol(rol_usuario, "calidad", es_admin=es_admin):
+        raise PermissionError("Solo usuarios de calidad o administradores pueden cerrar una no conformidad.")
 
     conn = conectar_db()
     cursor = conn.cursor()
@@ -1010,8 +1070,13 @@ def actualizar_estado_accion_calidad(
     id_accion: int,
     nuevo_estado: str,
     verificacion_eficacia: str | None = None,
+    es_admin: bool = False,
+    rol_usuario: str | None = None,
     usuario_email: str | None = None,
 ):
+    if nuevo_estado == "Cerrada" and not usuario_tiene_rol(rol_usuario, "calidad", es_admin=es_admin):
+        raise PermissionError("Solo usuarios de calidad o administradores pueden cerrar una acción.")
+
     conn = conectar_db()
     cursor = conn.cursor()
     fecha_cierre = datetime.now().strftime("%Y-%m-%d") if nuevo_estado == "Cerrada" else None
@@ -1058,9 +1123,10 @@ def aprobar_cierre_no_conformidad(
     comentario_final: str,
     verificacion_cierre: str | None = None,
     es_admin: bool = False,
+    rol_usuario: str | None = None,
 ):
-    if not es_admin:
-        raise PermissionError("Solo un administrador puede aprobar el cierre formal de una no conformidad.")
+    if not usuario_tiene_rol(rol_usuario, "calidad", es_admin=es_admin):
+        raise PermissionError("Solo usuarios de calidad o administradores pueden aprobar el cierre formal de una no conformidad.")
 
     conn = conectar_db()
     cursor = conn.cursor()
@@ -1109,9 +1175,10 @@ def aprobar_cierre_accion(
     comentario_final: str,
     verificacion_eficacia: str | None = None,
     es_admin: bool = False,
+    rol_usuario: str | None = None,
 ):
-    if not es_admin:
-        raise PermissionError("Solo un administrador puede aprobar el cierre formal de una acción.")
+    if not usuario_tiene_rol(rol_usuario, "calidad", es_admin=es_admin):
+        raise PermissionError("Solo usuarios de calidad o administradores pueden aprobar el cierre formal de una acción.")
 
     conn = conectar_db()
     cursor = conn.cursor()
@@ -1353,9 +1420,10 @@ def aprobar_version_documento(
     vigente_hasta: str | None = None,
     estado_documento: str = "Vigente",
     es_admin: bool = False,
+    rol_usuario: str | None = None,
 ):
-    if not es_admin:
-        raise PermissionError("Solo un administrador puede aprobar una versión documental.")
+    if not usuario_tiene_rol(rol_usuario, "calidad", es_admin=es_admin):
+        raise PermissionError("Solo usuarios de calidad o administradores pueden aprobar una versión documental.")
 
     conn = conectar_db()
     cursor = conn.cursor()

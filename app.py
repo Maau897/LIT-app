@@ -41,6 +41,7 @@ from logic import (
     listar_evidencias_calidad,
     listar_hallazgos_auditoria,
     listar_no_conformidades,
+    listar_usuarios,
     listar_versiones_documento,
     obtener_ocupacion_racks,
     obtener_usuarios_pendientes,
@@ -52,6 +53,7 @@ from logic import (
     registrar_version_documento,
     registrar_usuario,
     registrar_voluntario,
+    actualizar_rol_usuario,
     ver_alicuotas_pbmc_voluntario,
     ver_alicuotas_suero_voluntario,
     ver_rack_pbmc,
@@ -68,6 +70,21 @@ crear_admin_inicial(
     st.secrets["admin_email"],
     st.secrets["admin_password"]
 )
+
+ROLES_USUARIO = ["captura", "responsable", "auditor", "calidad", "admin"]
+
+
+def rol_actual():
+    return st.session_state.get("rol_usuario", "captura")
+
+
+def tiene_rol(*roles):
+    rol = rol_actual()
+    return rol == "admin" or rol in roles
+
+
+def mostrar_aviso_permiso(mensaje):
+    st.info(f"Permiso requerido: {mensaje}")
 
 
 def aplicar_estilos():
@@ -565,6 +582,57 @@ def construir_pendientes_prioritarios(
     return df_pendientes
 
 
+def calcular_promedio_cierre(df, fecha_inicio, fecha_fin):
+    if df.empty or fecha_inicio not in df.columns or fecha_fin not in df.columns:
+        return 0.0
+
+    tiempos = df[[fecha_inicio, fecha_fin]].copy()
+    tiempos[fecha_inicio] = pd.to_datetime(tiempos[fecha_inicio], errors="coerce")
+    tiempos[fecha_fin] = pd.to_datetime(tiempos[fecha_fin], errors="coerce")
+    tiempos = tiempos.dropna()
+
+    if tiempos.empty:
+        return 0.0
+
+    tiempos = tiempos[tiempos[fecha_fin] >= tiempos[fecha_inicio]]
+    if tiempos.empty:
+        return 0.0
+
+    return round((tiempos[fecha_fin] - tiempos[fecha_inicio]).dt.days.mean(), 1)
+
+
+def construir_serie_mensual(df, fecha_columna, etiqueta, meses=6):
+    if fecha_columna not in df.columns:
+        return pd.DataFrame(columns=["Mes", etiqueta])
+
+    fechas = pd.to_datetime(df[fecha_columna], errors="coerce").dropna()
+    hoy = pd.Timestamp.today().normalize()
+    inicio = (hoy - pd.DateOffset(months=meses - 1)).to_period("M")
+    fin = hoy.to_period("M")
+    indice = pd.period_range(start=inicio, end=fin, freq="M")
+
+    if fechas.empty:
+        return pd.DataFrame({"Mes": indice.astype(str), etiqueta: [0] * len(indice)})
+
+    serie = fechas.dt.to_period("M").value_counts().sort_index()
+    serie = serie.reindex(indice, fill_value=0)
+    return pd.DataFrame({"Mes": indice.astype(str), etiqueta: serie.values})
+
+
+def combinar_series_mensuales(df_izq, df_der, columna_mes="Mes"):
+    if df_izq.empty:
+        return df_der
+    if df_der.empty:
+        return df_izq
+    return df_izq.merge(df_der, on=columna_mes, how="outer").fillna(0)
+
+
+def formatear_porcentaje(parte, total):
+    if not total:
+        return "0%"
+    return f"{round((parte / total) * 100, 1)}%"
+
+
 def generar_excel_ejecutivo(secciones):
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
@@ -646,6 +714,7 @@ def pantalla_acceso():
                     st.session_state["autenticado"] = True
                     st.session_state["usuario_email"] = resultado["email"]
                     st.session_state["es_admin"] = resultado["es_admin"]
+                    st.session_state["rol_usuario"] = resultado.get("rol", "captura")
                     st.rerun()
                 else:
                     st.error(resultado["mensaje"])
@@ -656,6 +725,12 @@ def pantalla_acceso():
         email_registro = st.text_input("Correo institucional o personal", key="registro_email")
         password_registro = st.text_input("Contraseña", type="password", key="registro_password")
         password_registro_2 = st.text_input("Confirmar contraseña", type="password", key="registro_password_2")
+        rol_registro = st.selectbox(
+            "Perfil solicitado",
+            ["captura", "responsable", "auditor", "calidad"],
+            format_func=lambda valor: valor.capitalize(),
+            key="registro_rol",
+        )
 
         if st.button("Crear cuenta"):
             try:
@@ -664,7 +739,7 @@ def pantalla_acceso():
                 elif password_registro != password_registro_2:
                     st.warning("Las contraseñas no coinciden.")
                 else:
-                    registrar_usuario(email_registro, password_registro)
+                    registrar_usuario(email_registro, password_registro, rol_registro)
                     st.success("Cuenta creada. Queda pendiente de aprobación.")
             except Exception as e:
                 st.error(f"No se pudo crear la cuenta: {e}")
@@ -675,6 +750,9 @@ if "autenticado" not in st.session_state:
 
 if "es_admin" not in st.session_state:
     st.session_state["es_admin"] = False
+
+if "rol_usuario" not in st.session_state:
+    st.session_state["rol_usuario"] = "captura"
 
 if not st.session_state["autenticado"]:
     pantalla_acceso()
@@ -1131,6 +1209,12 @@ def mostrar_calidad():
         unsafe_allow_html=True,
     )
 
+    st.caption(
+        f"Perfil actual: {rol_actual().capitalize()} | "
+        "Captura registra información, Responsable da seguimiento, Auditor gestiona auditorías, "
+        "Calidad aprueba cierres y documentos, Admin conserva control total."
+    )
+
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("No conformidades abiertas", contar_no_conformidades_abiertas())
@@ -1139,7 +1223,7 @@ def mostrar_calidad():
     with col3:
         st.metric("Acciones vencidas", contar_acciones_vencidas())
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["No conformidades", "Acciones", "Auditorías", "Control documental", "Seguimiento"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["No conformidades", "Acciones", "Auditorías", "Control documental", "Seguimiento", "Indicadores"])
 
     with tab1:
         tarjeta_seccion(
@@ -1148,60 +1232,64 @@ def mostrar_calidad():
             "Documenta hallazgos, desviaciones, incidentes o incumplimientos con responsable y fecha compromiso.",
         )
 
-        with st.form("form_no_conformidad", clear_on_submit=True):
-            col1, col2 = st.columns(2)
+        enviado_nc = False
+        if tiene_rol("captura", "responsable", "calidad"):
+            with st.form("form_no_conformidad", clear_on_submit=True):
+                col1, col2 = st.columns(2)
 
-            with col1:
-                codigo = st.text_input("Código", placeholder="NC-2026-001")
-                titulo = st.text_input("Título")
-                origen = st.selectbox("Origen", ["Auditoría", "Proceso", "Cliente", "Proveedor", "Interno"])
-                area = st.text_input("Área o proceso")
-                severidad = st.selectbox("Severidad", ["Baja", "Media", "Alta", "Crítica"])
-                fecha_deteccion = st.date_input("Fecha de detección")
+                with col1:
+                    codigo = st.text_input("Código", placeholder="NC-2026-001")
+                    titulo = st.text_input("Título")
+                    origen = st.selectbox("Origen", ["Auditoría", "Proceso", "Cliente", "Proveedor", "Interno"])
+                    area = st.text_input("Área o proceso")
+                    severidad = st.selectbox("Severidad", ["Baja", "Media", "Alta", "Crítica"])
+                    fecha_deteccion = st.date_input("Fecha de detección")
 
-            with col2:
-                detectado_por = st.text_input("Detectado por")
-                responsable = st.text_input("Responsable")
-                fecha_compromiso = st.date_input("Fecha compromiso")
-                descripcion = st.text_area("Descripción")
-                causa_raiz = st.text_area("Causa raíz")
+                with col2:
+                    detectado_por = st.text_input("Detectado por")
+                    responsable = st.text_input("Responsable")
+                    fecha_compromiso = st.date_input("Fecha compromiso")
+                    descripcion = st.text_area("Descripción")
+                    causa_raiz = st.text_area("Causa raíz")
 
-            enviado_nc = st.form_submit_button("Guardar no conformidad")
+                enviado_nc = st.form_submit_button("Guardar no conformidad")
 
-        if enviado_nc:
-            datos_nc = {
-                "codigo": codigo.strip(),
-                "titulo": titulo.strip(),
-                "descripcion": descripcion.strip(),
-                "origen": origen,
-                "area": area.strip(),
-                "severidad": severidad,
-                "detectado_por": detectado_por.strip(),
-                "responsable": responsable.strip(),
-                "fecha_deteccion": str(fecha_deteccion),
-                "fecha_compromiso": str(fecha_compromiso),
-                "causa_raiz": causa_raiz.strip(),
-                "usuario_email": st.session_state.get("usuario_email", ""),
-            }
+            if enviado_nc:
+                datos_nc = {
+                    "codigo": codigo.strip(),
+                    "titulo": titulo.strip(),
+                    "descripcion": descripcion.strip(),
+                    "origen": origen,
+                    "area": area.strip(),
+                    "severidad": severidad,
+                    "detectado_por": detectado_por.strip(),
+                    "responsable": responsable.strip(),
+                    "fecha_deteccion": str(fecha_deteccion),
+                    "fecha_compromiso": str(fecha_compromiso),
+                    "causa_raiz": causa_raiz.strip(),
+                    "usuario_email": st.session_state.get("usuario_email", ""),
+                }
 
-            campos_requeridos = [
-                "codigo",
-                "titulo",
-                "descripcion",
-                "area",
-                "detectado_por",
-                "responsable",
-            ]
+                campos_requeridos = [
+                    "codigo",
+                    "titulo",
+                    "descripcion",
+                    "area",
+                    "detectado_por",
+                    "responsable",
+                ]
 
-            if any(not datos_nc[campo] for campo in campos_requeridos):
-                st.warning("Completa todos los campos obligatorios de la no conformidad.")
-            else:
-                try:
-                    registrar_no_conformidad(datos_nc)
-                    st.success("No conformidad registrada correctamente.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"No se pudo registrar la no conformidad: {e}")
+                if any(not datos_nc[campo] for campo in campos_requeridos):
+                    st.warning("Completa todos los campos obligatorios de la no conformidad.")
+                else:
+                    try:
+                        registrar_no_conformidad(datos_nc)
+                        st.success("No conformidad registrada correctamente.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"No se pudo registrar la no conformidad: {e}")
+        else:
+            mostrar_aviso_permiso("solo Captura, Responsable, Calidad o Admin pueden registrar no conformidades.")
 
         no_conformidades = listar_no_conformidades()
         st.subheader("No conformidades registradas")
@@ -1239,7 +1327,7 @@ def mostrar_calidad():
             "Permite corregir o completar datos base sin perder la trazabilidad, ya que cada edición entra en bitácora.",
         )
 
-        if no_conformidades:
+        if no_conformidades and tiene_rol("responsable", "calidad"):
             nc_por_label = {
                 f"{codigo} | {titulo}": {
                     "id": id_nc,
@@ -1306,10 +1394,13 @@ def mostrar_calidad():
                 except Exception as e:
                     st.error(f"No se pudo editar la no conformidad: {e}")
 
+        elif no_conformidades:
+            mostrar_aviso_permiso("solo Responsable, Calidad o Admin pueden editar no conformidades.")
+
         tarjeta_seccion(
             "Estado",
             "Actualizar no conformidad",
-            "Puedes mover hallazgos a En proceso y solo administradores pueden cerrarlos formalmente.",
+            "Puedes mover hallazgos a En proceso y solo Calidad o Admin pueden cerrarlos formalmente.",
         )
 
         if no_conformidades:
@@ -1318,29 +1409,33 @@ def mostrar_calidad():
                 for id_nc, codigo, titulo, _, _, _, _, estado, *_ in no_conformidades
             }
 
-            with st.form("form_estado_nc"):
-                seleccion_nc = st.selectbox("Selecciona la no conformidad", list(opciones_estado_nc.keys()))
-                nuevo_estado_nc = st.selectbox("Nuevo estado", ["Abierta", "En proceso"])
-                causa_raiz_update = st.text_area("Actualizar causa raíz", key="causa_raiz_update")
-                verificacion_cierre = st.text_area("Verificación de cierre", key="verificacion_cierre_nc")
-                guardar_estado_nc = st.form_submit_button("Actualizar estado")
+            if tiene_rol("responsable", "calidad"):
+                with st.form("form_estado_nc"):
+                    seleccion_nc = st.selectbox("Selecciona la no conformidad", list(opciones_estado_nc.keys()))
+                    nuevo_estado_nc = st.selectbox("Nuevo estado", ["Abierta", "En proceso"])
+                    causa_raiz_update = st.text_area("Actualizar causa raíz", key="causa_raiz_update")
+                    verificacion_cierre = st.text_area("Verificación de cierre", key="verificacion_cierre_nc")
+                    guardar_estado_nc = st.form_submit_button("Actualizar estado")
 
-            if guardar_estado_nc:
-                try:
-                    actualizar_estado_no_conformidad(
-                        id_no_conformidad=opciones_estado_nc[seleccion_nc],
-                        nuevo_estado=nuevo_estado_nc,
-                        causa_raiz=causa_raiz_update.strip() or None,
-                        verificacion_cierre=verificacion_cierre.strip() or None,
-                        es_admin=st.session_state.get("es_admin", False),
-                        usuario_email=st.session_state.get("usuario_email", ""),
-                    )
-                    st.success("Estado de no conformidad actualizado.")
-                    st.rerun()
-                except PermissionError as e:
-                    st.warning(str(e))
-                except Exception as e:
-                    st.error(f"No se pudo actualizar el estado: {e}")
+                if guardar_estado_nc:
+                    try:
+                        actualizar_estado_no_conformidad(
+                            id_no_conformidad=opciones_estado_nc[seleccion_nc],
+                            nuevo_estado=nuevo_estado_nc,
+                            causa_raiz=causa_raiz_update.strip() or None,
+                            verificacion_cierre=verificacion_cierre.strip() or None,
+                            es_admin=st.session_state.get("es_admin", False),
+                            rol_usuario=rol_actual(),
+                            usuario_email=st.session_state.get("usuario_email", ""),
+                        )
+                        st.success("Estado de no conformidad actualizado.")
+                        st.rerun()
+                    except PermissionError as e:
+                        st.warning(str(e))
+                    except Exception as e:
+                        st.error(f"No se pudo actualizar el estado: {e}")
+            else:
+                mostrar_aviso_permiso("solo Responsable, Calidad o Admin pueden actualizar no conformidades.")
 
             tarjeta_seccion(
                 "Evidencia",
@@ -1348,33 +1443,36 @@ def mostrar_calidad():
                 "Permite conservar soportes del hallazgo o del cierre en la misma plataforma.",
             )
 
-            with st.form("form_evidencia_nc"):
-                evidencia_nc = st.selectbox("No conformidad para evidencia", list(opciones_estado_nc.keys()), key="evidencia_nc")
-                descripcion_evidencia_nc = st.text_input("Descripción de la evidencia", key="descripcion_evidencia_nc")
-                archivo_nc = st.file_uploader(
-                    "Archivo de evidencia",
-                    key="archivo_evidencia_nc",
-                    type=None,
-                )
-                guardar_evidencia_nc = st.form_submit_button("Guardar evidencia")
+            if tiene_rol("responsable", "calidad", "auditor"):
+                with st.form("form_evidencia_nc"):
+                    evidencia_nc = st.selectbox("No conformidad para evidencia", list(opciones_estado_nc.keys()), key="evidencia_nc")
+                    descripcion_evidencia_nc = st.text_input("Descripción de la evidencia", key="descripcion_evidencia_nc")
+                    archivo_nc = st.file_uploader(
+                        "Archivo de evidencia",
+                        key="archivo_evidencia_nc",
+                        type=None,
+                    )
+                    guardar_evidencia_nc = st.form_submit_button("Guardar evidencia")
 
-            if guardar_evidencia_nc:
-                if archivo_nc is None:
-                    st.warning("Selecciona un archivo para guardar la evidencia.")
-                else:
-                    try:
-                        guardar_evidencia_calidad(
-                            tipo_entidad="no_conformidad",
-                            id_entidad=opciones_estado_nc[evidencia_nc],
-                            nombre_archivo_original=archivo_nc.name,
-                            contenido_archivo=archivo_nc.getvalue(),
-                            descripcion=descripcion_evidencia_nc.strip(),
-                            subido_por=st.session_state.get("usuario_email", ""),
-                        )
-                        st.success("Evidencia guardada correctamente.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"No se pudo guardar la evidencia: {e}")
+                if guardar_evidencia_nc:
+                    if archivo_nc is None:
+                        st.warning("Selecciona un archivo para guardar la evidencia.")
+                    else:
+                        try:
+                            guardar_evidencia_calidad(
+                                tipo_entidad="no_conformidad",
+                                id_entidad=opciones_estado_nc[evidencia_nc],
+                                nombre_archivo_original=archivo_nc.name,
+                                contenido_archivo=archivo_nc.getvalue(),
+                                descripcion=descripcion_evidencia_nc.strip(),
+                                subido_por=st.session_state.get("usuario_email", ""),
+                            )
+                            st.success("Evidencia guardada correctamente.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"No se pudo guardar la evidencia: {e}")
+            else:
+                mostrar_aviso_permiso("solo Responsable, Auditor, Calidad o Admin pueden cargar evidencia.")
 
             evidencia_nc_tabla = []
             for etiqueta, id_nc in opciones_estado_nc.items():
@@ -1400,27 +1498,31 @@ def mostrar_calidad():
                 "El cierre formal deja aprobador, fecha de aprobación y comentario final para auditoría.",
             )
 
-            with st.form("form_cierre_formal_nc"):
-                seleccion_cierre_nc = st.selectbox("No conformidad para cierre formal", list(opciones_estado_nc.keys()), key="seleccion_cierre_formal_nc")
-                verificacion_cierre_formal = st.text_area("Verificación de cierre final", key="verificacion_cierre_formal")
-                comentario_final_nc = st.text_area("Comentario final de aprobación", key="comentario_final_nc")
-                aprobar_cierre_nc = st.form_submit_button("Aprobar cierre formal")
+            if tiene_rol("calidad"):
+                with st.form("form_cierre_formal_nc"):
+                    seleccion_cierre_nc = st.selectbox("No conformidad para cierre formal", list(opciones_estado_nc.keys()), key="seleccion_cierre_formal_nc")
+                    verificacion_cierre_formal = st.text_area("Verificación de cierre final", key="verificacion_cierre_formal")
+                    comentario_final_nc = st.text_area("Comentario final de aprobación", key="comentario_final_nc")
+                    aprobar_cierre_nc = st.form_submit_button("Aprobar cierre formal")
 
-            if aprobar_cierre_nc:
-                try:
-                    aprobar_cierre_no_conformidad(
-                        id_no_conformidad=opciones_estado_nc[seleccion_cierre_nc],
-                        aprobado_por=st.session_state.get("usuario_email", ""),
-                        comentario_final=comentario_final_nc.strip(),
-                        verificacion_cierre=verificacion_cierre_formal.strip() or None,
-                        es_admin=st.session_state.get("es_admin", False),
-                    )
-                    st.success("Cierre formal de no conformidad aprobado.")
-                    st.rerun()
-                except PermissionError as e:
-                    st.warning(str(e))
-                except Exception as e:
-                    st.error(f"No se pudo aprobar el cierre formal: {e}")
+                if aprobar_cierre_nc:
+                    try:
+                        aprobar_cierre_no_conformidad(
+                            id_no_conformidad=opciones_estado_nc[seleccion_cierre_nc],
+                            aprobado_por=st.session_state.get("usuario_email", ""),
+                            comentario_final=comentario_final_nc.strip(),
+                            verificacion_cierre=verificacion_cierre_formal.strip() or None,
+                            es_admin=st.session_state.get("es_admin", False),
+                            rol_usuario=rol_actual(),
+                        )
+                        st.success("Cierre formal de no conformidad aprobado.")
+                        st.rerun()
+                    except PermissionError as e:
+                        st.warning(str(e))
+                    except Exception as e:
+                        st.error(f"No se pudo aprobar el cierre formal: {e}")
+            else:
+                mostrar_aviso_permiso("solo Calidad o Admin pueden aprobar el cierre formal de no conformidades.")
 
     with tab2:
         tarjeta_seccion(
@@ -1437,7 +1539,7 @@ def mostrar_calidad():
 
         if not opciones_nc:
             st.info("Primero registra una no conformidad para poder asociar acciones.")
-        else:
+        elif tiene_rol("responsable", "calidad"):
             with st.form("form_accion_calidad", clear_on_submit=True):
                 referencia_nc = st.selectbox("No conformidad asociada", list(opciones_nc.keys()))
                 col1, col2 = st.columns(2)
@@ -1476,6 +1578,8 @@ def mostrar_calidad():
                         st.rerun()
                     except Exception as e:
                         st.error(f"No se pudo registrar la acción: {e}")
+        else:
+            mostrar_aviso_permiso("solo Responsable, Calidad o Admin pueden registrar acciones.")
 
         acciones = listar_acciones_calidad()
         st.subheader("Acciones registradas")
@@ -1504,7 +1608,7 @@ def mostrar_calidad():
         else:
             st.info("Todavía no hay acciones registradas.")
 
-        if acciones:
+        if acciones and tiene_rol("responsable", "calidad"):
             tarjeta_seccion(
                 "Edición",
                 "Editar acción",
@@ -1562,6 +1666,8 @@ def mostrar_calidad():
                     st.rerun()
                 except Exception as e:
                     st.error(f"No se pudo editar la acción: {e}")
+        elif acciones:
+            mostrar_aviso_permiso("solo Responsable, Calidad o Admin pueden editar acciones.")
 
             tarjeta_seccion(
                 "Estado",
@@ -1574,24 +1680,31 @@ def mostrar_calidad():
                 for id_accion, _, codigo_nc, titulo_accion, _, _, _, estado, *_ in acciones
             }
 
-            with st.form("form_estado_accion"):
-                seleccion_accion = st.selectbox("Selecciona la acción", list(opciones_accion.keys()))
-                nuevo_estado_accion = st.selectbox("Nuevo estado de la acción", ["Abierta", "En proceso"])
-                verificacion_eficacia = st.text_area("Verificación de eficacia", key="verificacion_eficacia")
-                guardar_estado_accion = st.form_submit_button("Actualizar acción")
+            if tiene_rol("responsable", "calidad"):
+                with st.form("form_estado_accion"):
+                    seleccion_accion = st.selectbox("Selecciona la acción", list(opciones_accion.keys()))
+                    nuevo_estado_accion = st.selectbox("Nuevo estado de la acción", ["Abierta", "En proceso"])
+                    verificacion_eficacia = st.text_area("Verificación de eficacia", key="verificacion_eficacia")
+                    guardar_estado_accion = st.form_submit_button("Actualizar acción")
 
-            if guardar_estado_accion:
-                try:
-                    actualizar_estado_accion_calidad(
-                        id_accion=opciones_accion[seleccion_accion],
-                        nuevo_estado=nuevo_estado_accion,
-                        verificacion_eficacia=verificacion_eficacia.strip() or None,
-                        usuario_email=st.session_state.get("usuario_email", ""),
-                    )
-                    st.success("Acción actualizada correctamente.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"No se pudo actualizar la acción: {e}")
+                if guardar_estado_accion:
+                    try:
+                        actualizar_estado_accion_calidad(
+                            id_accion=opciones_accion[seleccion_accion],
+                            nuevo_estado=nuevo_estado_accion,
+                            verificacion_eficacia=verificacion_eficacia.strip() or None,
+                            es_admin=st.session_state.get("es_admin", False),
+                            rol_usuario=rol_actual(),
+                            usuario_email=st.session_state.get("usuario_email", ""),
+                        )
+                        st.success("Acción actualizada correctamente.")
+                        st.rerun()
+                    except PermissionError as e:
+                        st.warning(str(e))
+                    except Exception as e:
+                        st.error(f"No se pudo actualizar la acción: {e}")
+            else:
+                mostrar_aviso_permiso("solo Responsable, Calidad o Admin pueden actualizar acciones.")
 
             tarjeta_seccion(
                 "Evidencia",
@@ -1599,33 +1712,36 @@ def mostrar_calidad():
                 "Útil para guardar planes, formatos, fotos o pruebas de implementación.",
             )
 
-            with st.form("form_evidencia_accion"):
-                evidencia_accion = st.selectbox("Acción para evidencia", list(opciones_accion.keys()), key="evidencia_accion")
-                descripcion_evidencia_accion = st.text_input("Descripción de la evidencia", key="descripcion_evidencia_accion")
-                archivo_accion = st.file_uploader(
-                    "Archivo de evidencia de acción",
-                    key="archivo_evidencia_accion",
-                    type=None,
-                )
-                guardar_evidencia_accion = st.form_submit_button("Guardar evidencia de acción")
+            if tiene_rol("responsable", "calidad", "auditor"):
+                with st.form("form_evidencia_accion"):
+                    evidencia_accion = st.selectbox("Acción para evidencia", list(opciones_accion.keys()), key="evidencia_accion")
+                    descripcion_evidencia_accion = st.text_input("Descripción de la evidencia", key="descripcion_evidencia_accion")
+                    archivo_accion = st.file_uploader(
+                        "Archivo de evidencia de acción",
+                        key="archivo_evidencia_accion",
+                        type=None,
+                    )
+                    guardar_evidencia_accion = st.form_submit_button("Guardar evidencia de acción")
 
-            if guardar_evidencia_accion:
-                if archivo_accion is None:
-                    st.warning("Selecciona un archivo para guardar la evidencia.")
-                else:
-                    try:
-                        guardar_evidencia_calidad(
-                            tipo_entidad="accion",
-                            id_entidad=opciones_accion[evidencia_accion],
-                            nombre_archivo_original=archivo_accion.name,
-                            contenido_archivo=archivo_accion.getvalue(),
-                            descripcion=descripcion_evidencia_accion.strip(),
-                            subido_por=st.session_state.get("usuario_email", ""),
-                        )
-                        st.success("Evidencia de acción guardada correctamente.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"No se pudo guardar la evidencia: {e}")
+                if guardar_evidencia_accion:
+                    if archivo_accion is None:
+                        st.warning("Selecciona un archivo para guardar la evidencia.")
+                    else:
+                        try:
+                            guardar_evidencia_calidad(
+                                tipo_entidad="accion",
+                                id_entidad=opciones_accion[evidencia_accion],
+                                nombre_archivo_original=archivo_accion.name,
+                                contenido_archivo=archivo_accion.getvalue(),
+                                descripcion=descripcion_evidencia_accion.strip(),
+                                subido_por=st.session_state.get("usuario_email", ""),
+                            )
+                            st.success("Evidencia de acción guardada correctamente.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"No se pudo guardar la evidencia: {e}")
+            else:
+                mostrar_aviso_permiso("solo Responsable, Auditor, Calidad o Admin pueden cargar evidencia.")
 
             tarjeta_seccion(
                 "Aprobación",
@@ -1633,27 +1749,31 @@ def mostrar_calidad():
                 "El cierre formal deja aprobado por, fecha y comentario final con evidencia de eficacia.",
             )
 
-            with st.form("form_cierre_formal_accion"):
-                seleccion_cierre_accion = st.selectbox("Acción para cierre formal", list(opciones_accion.keys()), key="seleccion_cierre_formal_accion")
-                verificacion_eficacia_formal = st.text_area("Verificación de eficacia final", key="verificacion_eficacia_formal")
-                comentario_final_accion = st.text_area("Comentario final de aprobación", key="comentario_final_accion")
-                aprobar_cierre_accion_btn = st.form_submit_button("Aprobar cierre formal de acción")
+            if tiene_rol("calidad"):
+                with st.form("form_cierre_formal_accion"):
+                    seleccion_cierre_accion = st.selectbox("Acción para cierre formal", list(opciones_accion.keys()), key="seleccion_cierre_formal_accion")
+                    verificacion_eficacia_formal = st.text_area("Verificación de eficacia final", key="verificacion_eficacia_formal")
+                    comentario_final_accion = st.text_area("Comentario final de aprobación", key="comentario_final_accion")
+                    aprobar_cierre_accion_btn = st.form_submit_button("Aprobar cierre formal de acción")
 
-            if aprobar_cierre_accion_btn:
-                try:
-                    aprobar_cierre_accion(
-                        id_accion=opciones_accion[seleccion_cierre_accion],
-                        aprobado_por=st.session_state.get("usuario_email", ""),
-                        comentario_final=comentario_final_accion.strip(),
-                        verificacion_eficacia=verificacion_eficacia_formal.strip() or None,
-                        es_admin=st.session_state.get("es_admin", False),
-                    )
-                    st.success("Cierre formal de acción aprobado.")
-                    st.rerun()
-                except PermissionError as e:
-                    st.warning(str(e))
-                except Exception as e:
-                    st.error(f"No se pudo aprobar el cierre formal de la acción: {e}")
+                if aprobar_cierre_accion_btn:
+                    try:
+                        aprobar_cierre_accion(
+                            id_accion=opciones_accion[seleccion_cierre_accion],
+                            aprobado_por=st.session_state.get("usuario_email", ""),
+                            comentario_final=comentario_final_accion.strip(),
+                            verificacion_eficacia=verificacion_eficacia_formal.strip() or None,
+                            es_admin=st.session_state.get("es_admin", False),
+                            rol_usuario=rol_actual(),
+                        )
+                        st.success("Cierre formal de acción aprobado.")
+                        st.rerun()
+                    except PermissionError as e:
+                        st.warning(str(e))
+                    except Exception as e:
+                        st.error(f"No se pudo aprobar el cierre formal de la acción: {e}")
+            else:
+                mostrar_aviso_permiso("solo Calidad o Admin pueden aprobar el cierre formal de acciones.")
 
     with tab3:
         tarjeta_seccion(
@@ -1662,46 +1782,50 @@ def mostrar_calidad():
             "Deja programadas auditorías, criterios y responsable para fortalecer la preparación de ISO 9001.",
         )
 
-        with st.form("form_auditoria", clear_on_submit=True):
-            col1, col2 = st.columns(2)
+        guardar_auditoria = False
+        if tiene_rol("auditor", "calidad"):
+            with st.form("form_auditoria", clear_on_submit=True):
+                col1, col2 = st.columns(2)
 
-            with col1:
-                codigo_auditoria = st.text_input("Código de auditoría", placeholder="AUD-2026-001")
-                titulo_auditoria = st.text_input("Título")
-                area_auditoria = st.text_input("Área auditada")
-                auditor_lider = st.text_input("Auditor líder")
+                with col1:
+                    codigo_auditoria = st.text_input("Código de auditoría", placeholder="AUD-2026-001")
+                    titulo_auditoria = st.text_input("Título")
+                    area_auditoria = st.text_input("Área auditada")
+                    auditor_lider = st.text_input("Auditor líder")
 
-            with col2:
-                fecha_programada = st.date_input("Fecha programada", key="fecha_programada_auditoria")
-                estado_auditoria = st.selectbox("Estado", ["Programada", "En ejecución", "Cerrada"])
-                alcance_auditoria = st.text_area("Alcance")
-                criterios_auditoria = st.text_area("Criterios")
+                with col2:
+                    fecha_programada = st.date_input("Fecha programada", key="fecha_programada_auditoria")
+                    estado_auditoria = st.selectbox("Estado", ["Programada", "En ejecución", "Cerrada"])
+                    alcance_auditoria = st.text_area("Alcance")
+                    criterios_auditoria = st.text_area("Criterios")
 
-            guardar_auditoria = st.form_submit_button("Guardar auditoría")
+                guardar_auditoria = st.form_submit_button("Guardar auditoría")
 
-        if guardar_auditoria:
-            datos_auditoria = {
-                "codigo": codigo_auditoria.strip(),
-                "titulo": titulo_auditoria.strip(),
-                "area": area_auditoria.strip(),
-                "auditor_lider": auditor_lider.strip(),
-                "fecha_programada": str(fecha_programada),
-                "alcance": alcance_auditoria.strip(),
-                "criterios": criterios_auditoria.strip(),
-                "estado": estado_auditoria,
-                "usuario_email": st.session_state.get("usuario_email", ""),
-            }
+            if guardar_auditoria:
+                datos_auditoria = {
+                    "codigo": codigo_auditoria.strip(),
+                    "titulo": titulo_auditoria.strip(),
+                    "area": area_auditoria.strip(),
+                    "auditor_lider": auditor_lider.strip(),
+                    "fecha_programada": str(fecha_programada),
+                    "alcance": alcance_auditoria.strip(),
+                    "criterios": criterios_auditoria.strip(),
+                    "estado": estado_auditoria,
+                    "usuario_email": st.session_state.get("usuario_email", ""),
+                }
 
-            campos_requeridos = ["codigo", "titulo", "area", "auditor_lider"]
-            if any(not datos_auditoria[campo] for campo in campos_requeridos):
-                st.warning("Completa los campos obligatorios de la auditoría.")
-            else:
-                try:
-                    registrar_auditoria_calidad(datos_auditoria)
-                    st.success("Auditoría registrada correctamente.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"No se pudo registrar la auditoría: {e}")
+                campos_requeridos = ["codigo", "titulo", "area", "auditor_lider"]
+                if any(not datos_auditoria[campo] for campo in campos_requeridos):
+                    st.warning("Completa los campos obligatorios de la auditoría.")
+                else:
+                    try:
+                        registrar_auditoria_calidad(datos_auditoria)
+                        st.success("Auditoría registrada correctamente.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"No se pudo registrar la auditoría: {e}")
+        else:
+            mostrar_aviso_permiso("solo Auditor, Calidad o Admin pueden programar auditorías.")
 
         auditorias = listar_auditorias_calidad()
         st.subheader("Auditorías internas")
@@ -1737,40 +1861,43 @@ def mostrar_calidad():
                 for id_auditoria, codigo, titulo, *_ in auditorias
             }
 
-            with st.form("form_hallazgo_auditoria", clear_on_submit=True):
-                auditoria_hallazgo = st.selectbox("Auditoría asociada", list(opciones_auditoria.keys()))
-                referencia_hallazgo = st.text_input("Referencia", placeholder="ISO 9001 - 8.7")
-                descripcion_hallazgo = st.text_area("Descripción del hallazgo")
-                col1, col2 = st.columns(2)
-                with col1:
-                    severidad_hallazgo = st.selectbox("Severidad del hallazgo", ["Menor", "Mayor", "Crítica"])
-                    responsable_hallazgo = st.text_input("Responsable")
-                with col2:
-                    estado_hallazgo = st.selectbox("Estado del hallazgo", ["Abierto", "En proceso", "Cerrado"])
-                    fecha_compromiso_hallazgo = st.date_input("Fecha compromiso", key="fecha_compromiso_hallazgo")
-                guardar_hallazgo = st.form_submit_button("Guardar hallazgo")
+            if tiene_rol("auditor", "calidad"):
+                with st.form("form_hallazgo_auditoria", clear_on_submit=True):
+                    auditoria_hallazgo = st.selectbox("Auditoría asociada", list(opciones_auditoria.keys()))
+                    referencia_hallazgo = st.text_input("Referencia", placeholder="ISO 9001 - 8.7")
+                    descripcion_hallazgo = st.text_area("Descripción del hallazgo")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        severidad_hallazgo = st.selectbox("Severidad del hallazgo", ["Menor", "Mayor", "Crítica"])
+                        responsable_hallazgo = st.text_input("Responsable")
+                    with col2:
+                        estado_hallazgo = st.selectbox("Estado del hallazgo", ["Abierto", "En proceso", "Cerrado"])
+                        fecha_compromiso_hallazgo = st.date_input("Fecha compromiso", key="fecha_compromiso_hallazgo")
+                    guardar_hallazgo = st.form_submit_button("Guardar hallazgo")
 
-            if guardar_hallazgo:
-                datos_hallazgo = {
-                    "id_auditoria": opciones_auditoria[auditoria_hallazgo],
-                    "referencia": referencia_hallazgo.strip(),
-                    "descripcion": descripcion_hallazgo.strip(),
-                    "severidad": severidad_hallazgo,
-                    "estado": estado_hallazgo,
-                    "responsable": responsable_hallazgo.strip(),
-                    "fecha_compromiso": str(fecha_compromiso_hallazgo),
-                    "usuario_email": st.session_state.get("usuario_email", ""),
-                }
+                if guardar_hallazgo:
+                    datos_hallazgo = {
+                        "id_auditoria": opciones_auditoria[auditoria_hallazgo],
+                        "referencia": referencia_hallazgo.strip(),
+                        "descripcion": descripcion_hallazgo.strip(),
+                        "severidad": severidad_hallazgo,
+                        "estado": estado_hallazgo,
+                        "responsable": responsable_hallazgo.strip(),
+                        "fecha_compromiso": str(fecha_compromiso_hallazgo),
+                        "usuario_email": st.session_state.get("usuario_email", ""),
+                    }
 
-                if not datos_hallazgo["referencia"] or not datos_hallazgo["descripcion"]:
-                    st.warning("Completa la referencia y la descripción del hallazgo.")
-                else:
-                    try:
-                        registrar_hallazgo_auditoria(datos_hallazgo)
-                        st.success("Hallazgo registrado correctamente.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"No se pudo registrar el hallazgo: {e}")
+                    if not datos_hallazgo["referencia"] or not datos_hallazgo["descripcion"]:
+                        st.warning("Completa la referencia y la descripción del hallazgo.")
+                    else:
+                        try:
+                            registrar_hallazgo_auditoria(datos_hallazgo)
+                            st.success("Hallazgo registrado correctamente.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"No se pudo registrar el hallazgo: {e}")
+            else:
+                mostrar_aviso_permiso("solo Auditor, Calidad o Admin pueden registrar hallazgos de auditoría.")
 
         hallazgos = listar_hallazgos_auditoria()
         if hallazgos:
@@ -1788,37 +1915,41 @@ def mostrar_calidad():
             "Gestiona documentos, versiones, vigencia y aprobaciones dentro del sistema de calidad.",
         )
 
-        with st.form("form_documento", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                codigo_documento = st.text_input("Código de documento", placeholder="PROC-CAL-001")
-                nombre_documento = st.text_input("Nombre del documento")
-                proceso_documento = st.text_input("Proceso o área")
-            with col2:
-                tipo_documento = st.selectbox("Tipo de documento", ["Procedimiento", "Formato", "Instructivo", "Política", "Manual", "Registro"])
-                estado_documento = st.selectbox("Estado inicial", ["Borrador", "Vigente", "Obsoleto"])
-                observaciones_documento = st.text_area("Observaciones")
-            guardar_documento = st.form_submit_button("Guardar documento")
+        guardar_documento = False
+        if tiene_rol("calidad"):
+            with st.form("form_documento", clear_on_submit=True):
+                col1, col2 = st.columns(2)
+                with col1:
+                    codigo_documento = st.text_input("Código de documento", placeholder="PROC-CAL-001")
+                    nombre_documento = st.text_input("Nombre del documento")
+                    proceso_documento = st.text_input("Proceso o área")
+                with col2:
+                    tipo_documento = st.selectbox("Tipo de documento", ["Procedimiento", "Formato", "Instructivo", "Política", "Manual", "Registro"])
+                    estado_documento = st.selectbox("Estado inicial", ["Borrador", "Vigente", "Obsoleto"])
+                    observaciones_documento = st.text_area("Observaciones")
+                guardar_documento = st.form_submit_button("Guardar documento")
 
-        if guardar_documento:
-            datos_documento = {
-                "codigo": codigo_documento.strip(),
-                "nombre": nombre_documento.strip(),
-                "proceso_area": proceso_documento.strip(),
-                "tipo_documento": tipo_documento,
-                "estado": estado_documento,
-                "observaciones": observaciones_documento.strip(),
-                "usuario_email": st.session_state.get("usuario_email", ""),
-            }
-            if not datos_documento["codigo"] or not datos_documento["nombre"] or not datos_documento["proceso_area"]:
-                st.warning("Completa código, nombre y proceso o área del documento.")
-            else:
-                try:
-                    registrar_documento_calidad(datos_documento)
-                    st.success("Documento registrado correctamente.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"No se pudo registrar el documento: {e}")
+            if guardar_documento:
+                datos_documento = {
+                    "codigo": codigo_documento.strip(),
+                    "nombre": nombre_documento.strip(),
+                    "proceso_area": proceso_documento.strip(),
+                    "tipo_documento": tipo_documento,
+                    "estado": estado_documento,
+                    "observaciones": observaciones_documento.strip(),
+                    "usuario_email": st.session_state.get("usuario_email", ""),
+                }
+                if not datos_documento["codigo"] or not datos_documento["nombre"] or not datos_documento["proceso_area"]:
+                    st.warning("Completa código, nombre y proceso o área del documento.")
+                else:
+                    try:
+                        registrar_documento_calidad(datos_documento)
+                        st.success("Documento registrado correctamente.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"No se pudo registrar el documento: {e}")
+        else:
+            mostrar_aviso_permiso("solo Calidad o Admin pueden crear documentos controlados.")
 
         documentos = listar_documentos_calidad()
         st.subheader("Documentos controlados")
@@ -1860,27 +1991,30 @@ def mostrar_calidad():
                 "Sube una nueva versión, describe los cambios y conserva el archivo asociado.",
             )
 
-            with st.form("form_version_documento", clear_on_submit=True):
-                seleccion_documento_version = st.selectbox("Documento", list(documentos_por_label.keys()))
-                version_documento = st.text_input("Versión", placeholder="1.0")
-                cambios_version = st.text_area("Resumen de cambios")
-                archivo_version = st.file_uploader("Archivo del documento", key="archivo_documento_version")
-                guardar_version_documento = st.form_submit_button("Guardar versión")
+            if tiene_rol("calidad"):
+                with st.form("form_version_documento", clear_on_submit=True):
+                    seleccion_documento_version = st.selectbox("Documento", list(documentos_por_label.keys()))
+                    version_documento = st.text_input("Versión", placeholder="1.0")
+                    cambios_version = st.text_area("Resumen de cambios")
+                    archivo_version = st.file_uploader("Archivo del documento", key="archivo_documento_version")
+                    guardar_version_documento = st.form_submit_button("Guardar versión")
 
-            if guardar_version_documento:
-                try:
-                    registrar_version_documento(
-                        id_documento=documentos_por_label[seleccion_documento_version],
-                        version=version_documento.strip(),
-                        cambios_resumen=cambios_version.strip(),
-                        elaborado_por=st.session_state.get("usuario_email", ""),
-                        nombre_archivo_original=archivo_version.name if archivo_version else None,
-                        contenido_archivo=archivo_version.getvalue() if archivo_version else None,
-                    )
-                    st.success("Versión documental registrada correctamente.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"No se pudo registrar la versión: {e}")
+                if guardar_version_documento:
+                    try:
+                        registrar_version_documento(
+                            id_documento=documentos_por_label[seleccion_documento_version],
+                            version=version_documento.strip(),
+                            cambios_resumen=cambios_version.strip(),
+                            elaborado_por=st.session_state.get("usuario_email", ""),
+                            nombre_archivo_original=archivo_version.name if archivo_version else None,
+                            contenido_archivo=archivo_version.getvalue() if archivo_version else None,
+                        )
+                        st.success("Versión documental registrada correctamente.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"No se pudo registrar la versión: {e}")
+            else:
+                mostrar_aviso_permiso("solo Calidad o Admin pueden registrar versiones documentales.")
 
             tarjeta_seccion(
                 "Aprobación",
@@ -1888,43 +2022,47 @@ def mostrar_calidad():
                 "La aprobación formal marca la versión vigente y actualiza el estado del documento.",
             )
 
-            with st.form("form_aprobar_version_documento"):
-                seleccion_documento_aprobacion = st.selectbox("Documento para aprobar", list(documentos_por_label.keys()), key="seleccion_documento_aprobacion")
-                id_doc_aprobar = documentos_por_label[seleccion_documento_aprobacion]
-                versiones_documento = listar_versiones_documento(id_doc_aprobar)
-                opciones_version = {
-                    f"{version} | {'Vigente' if es_vigente else 'Pendiente'}": id_version
-                    for id_version, version, _, _, _, _, _, _, es_vigente, _ in versiones_documento
-                }
-                seleccion_version = st.selectbox("Versión", list(opciones_version.keys())) if opciones_version else st.selectbox("Versión", ["Sin versiones"])
-                col1, col2 = st.columns(2)
-                with col1:
-                    vigente_desde_doc = st.date_input("Vigente desde", key="vigente_desde_doc")
-                with col2:
-                    vigente_hasta_doc = st.date_input("Vigente hasta", key="vigente_hasta_doc")
-                estado_aprobado_doc = st.selectbox("Estado del documento", ["Vigente", "Obsoleto"], key="estado_aprobado_doc")
-                aprobar_version_btn = st.form_submit_button("Aprobar versión documental")
+            if tiene_rol("calidad"):
+                with st.form("form_aprobar_version_documento"):
+                    seleccion_documento_aprobacion = st.selectbox("Documento para aprobar", list(documentos_por_label.keys()), key="seleccion_documento_aprobacion")
+                    id_doc_aprobar = documentos_por_label[seleccion_documento_aprobacion]
+                    versiones_documento = listar_versiones_documento(id_doc_aprobar)
+                    opciones_version = {
+                        f"{version} | {'Vigente' if es_vigente else 'Pendiente'}": id_version
+                        for id_version, version, _, _, _, _, _, _, es_vigente, _ in versiones_documento
+                    }
+                    seleccion_version = st.selectbox("Versión", list(opciones_version.keys())) if opciones_version else st.selectbox("Versión", ["Sin versiones"])
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        vigente_desde_doc = st.date_input("Vigente desde", key="vigente_desde_doc")
+                    with col2:
+                        vigente_hasta_doc = st.date_input("Vigente hasta", key="vigente_hasta_doc")
+                    estado_aprobado_doc = st.selectbox("Estado del documento", ["Vigente", "Obsoleto"], key="estado_aprobado_doc")
+                    aprobar_version_btn = st.form_submit_button("Aprobar versión documental")
 
-            if aprobar_version_btn:
-                if not opciones_version:
-                    st.warning("Primero registra una versión para poder aprobarla.")
-                else:
-                    try:
-                        aprobar_version_documento(
-                            id_documento=id_doc_aprobar,
-                            id_version=opciones_version[seleccion_version],
-                            aprobado_por=st.session_state.get("usuario_email", ""),
-                            vigente_desde=str(vigente_desde_doc),
-                            vigente_hasta=str(vigente_hasta_doc),
-                            estado_documento=estado_aprobado_doc,
-                            es_admin=st.session_state.get("es_admin", False),
-                        )
-                        st.success("Versión documental aprobada correctamente.")
-                        st.rerun()
-                    except PermissionError as e:
-                        st.warning(str(e))
-                    except Exception as e:
-                        st.error(f"No se pudo aprobar la versión documental: {e}")
+                if aprobar_version_btn:
+                    if not opciones_version:
+                        st.warning("Primero registra una versión para poder aprobarla.")
+                    else:
+                        try:
+                            aprobar_version_documento(
+                                id_documento=id_doc_aprobar,
+                                id_version=opciones_version[seleccion_version],
+                                aprobado_por=st.session_state.get("usuario_email", ""),
+                                vigente_desde=str(vigente_desde_doc),
+                                vigente_hasta=str(vigente_hasta_doc),
+                                estado_documento=estado_aprobado_doc,
+                                es_admin=st.session_state.get("es_admin", False),
+                                rol_usuario=rol_actual(),
+                            )
+                            st.success("Versión documental aprobada correctamente.")
+                            st.rerun()
+                        except PermissionError as e:
+                            st.warning(str(e))
+                        except Exception as e:
+                            st.error(f"No se pudo aprobar la versión documental: {e}")
+            else:
+                mostrar_aviso_permiso("solo Calidad o Admin pueden aprobar versiones documentales.")
 
             st.write("### Versiones documentales")
             tabla_versiones = []
@@ -2415,6 +2553,207 @@ def mostrar_calidad():
         else:
             st.info("Todavía no hay eventos registrados en la bitácora.")
 
+    with tab6:
+        tarjeta_seccion(
+            "KPI",
+            "Indicadores de calidad",
+            "Mide cumplimiento, tiempos de cierre y carga operativa para dar seguimiento ejecutivo al sistema.",
+        )
+
+        meses_analisis = st.selectbox(
+            "Ventana de análisis",
+            [3, 6, 12],
+            index=1,
+            format_func=lambda valor: f"Últimos {valor} meses",
+            key="indicadores_meses",
+        )
+
+        nc_ind = listar_no_conformidades()
+        acciones_ind = listar_acciones_calidad()
+        auditorias_ind = listar_auditorias_calidad()
+        hallazgos_ind = listar_hallazgos_auditoria()
+        documentos_ind = listar_documentos_calidad()
+
+        df_nc_ind = pd.DataFrame(
+            nc_ind,
+            columns=[
+                "ID", "Código", "Título", "Descripción", "Origen", "Área", "Severidad",
+                "Estado", "Detectado por", "Responsable", "Fecha detección",
+                "Fecha compromiso", "Causa raíz", "Fecha cierre", "Aprobado por", "Fecha aprobación", "Comentario final",
+            ],
+        ) if nc_ind else pd.DataFrame()
+        df_acc_ind = pd.DataFrame(
+            acciones_ind,
+            columns=[
+                "ID acción", "ID NC", "Código NC", "Título", "Descripción", "Tipo",
+                "Responsable", "Estado", "Fecha inicio", "Fecha compromiso", "Fecha cierre", "Aprobado por", "Fecha aprobación", "Comentario final",
+            ],
+        ) if acciones_ind else pd.DataFrame()
+        df_aud_ind = pd.DataFrame(
+            auditorias_ind,
+            columns=[
+                "ID auditoría", "Código", "Título", "Área", "Auditor líder",
+                "Fecha programada", "Estado", "Resultado",
+            ],
+        ) if auditorias_ind else pd.DataFrame()
+        df_hall_ind = pd.DataFrame(
+            hallazgos_ind,
+            columns=[
+                "ID hallazgo", "ID auditoría", "Código auditoría", "Referencia",
+                "Descripción", "Severidad", "Estado", "Responsable", "Fecha compromiso",
+            ],
+        ) if hallazgos_ind else pd.DataFrame()
+        df_docs_ind = pd.DataFrame(
+            documentos_ind,
+            columns=[
+                "ID", "Código", "Nombre", "Proceso/Área", "Tipo",
+                "Estado", "Versión actual", "Vigente desde", "Vigente hasta",
+                "Aprobado por", "Fecha aprobación", "Observaciones",
+            ],
+        ) if documentos_ind else pd.DataFrame()
+
+        versiones_ind = []
+        for id_documento, codigo, nombre, *_ in documentos_ind:
+            for id_version, version, _, _, _, elaborado_por, aprobado_por, fecha_aprobacion, es_vigente, created_at in listar_versiones_documento(id_documento):
+                versiones_ind.append(
+                    {
+                        "Código": codigo,
+                        "Nombre": nombre,
+                        "Versión": version,
+                        "Elaborado por": elaborado_por,
+                        "Aprobado por": aprobado_por,
+                        "Fecha aprobación": fecha_aprobacion,
+                        "Vigente": "Sí" if es_vigente else "No",
+                        "Registrada el": created_at,
+                    }
+                )
+        df_versiones_ind = pd.DataFrame(versiones_ind) if versiones_ind else pd.DataFrame()
+
+        total_nc = len(df_nc_ind)
+        nc_abiertas = len(df_nc_ind[df_nc_ind["Estado"] != "Cerrada"]) if not df_nc_ind.empty else 0
+        nc_cerradas = len(df_nc_ind[df_nc_ind["Estado"] == "Cerrada"]) if not df_nc_ind.empty else 0
+        total_acciones = len(df_acc_ind)
+        acciones_abiertas = len(df_acc_ind[df_acc_ind["Estado"] != "Cerrada"]) if not df_acc_ind.empty else 0
+        acciones_cerradas = len(df_acc_ind[df_acc_ind["Estado"] == "Cerrada"]) if not df_acc_ind.empty else 0
+        acciones_vencidas_ind = len(
+            df_acc_ind[
+                (df_acc_ind["Estado"] != "Cerrada")
+                & (pd.to_datetime(df_acc_ind["Fecha compromiso"], errors="coerce") < pd.Timestamp.today().normalize())
+            ]
+        ) if not df_acc_ind.empty else 0
+        auditorias_cerradas = len(df_aud_ind[df_aud_ind["Estado"] == "Cerrada"]) if not df_aud_ind.empty else 0
+        total_auditorias = len(df_aud_ind)
+        documentos_vigentes = len(df_docs_ind[df_docs_ind["Estado"] == "Vigente"]) if not df_docs_ind.empty else 0
+        documentos_vencidos = len(
+            df_docs_ind[
+                (df_docs_ind["Estado"] == "Vigente")
+                & (pd.to_datetime(df_docs_ind["Vigente hasta"], errors="coerce") < pd.Timestamp.today().normalize())
+            ]
+        ) if not df_docs_ind.empty else 0
+        versiones_pendientes = len(
+            df_versiones_ind[
+                df_versiones_ind["Aprobado por"].isna() | (df_versiones_ind["Aprobado por"].astype(str).str.strip() == "")
+            ]
+        ) if not df_versiones_ind.empty else 0
+
+        promedio_cierre_nc = calcular_promedio_cierre(df_nc_ind, "Fecha detección", "Fecha cierre")
+        promedio_cierre_acciones = calcular_promedio_cierre(df_acc_ind, "Fecha inicio", "Fecha cierre")
+
+        kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
+        with kpi_col1:
+            st.metric("NC abiertas", nc_abiertas, delta=f"Cierre: {formatear_porcentaje(nc_cerradas, total_nc)}")
+        with kpi_col2:
+            st.metric("Acciones vencidas", acciones_vencidas_ind, delta=f"Abiertas: {acciones_abiertas}")
+        with kpi_col3:
+            st.metric("Promedio cierre NC", f"{promedio_cierre_nc} días")
+        with kpi_col4:
+            st.metric("Cumplimiento auditorías", formatear_porcentaje(auditorias_cerradas, total_auditorias))
+
+        kpi_col5, kpi_col6, kpi_col7, kpi_col8 = st.columns(4)
+        with kpi_col5:
+            st.metric("Acciones cerradas", acciones_cerradas, delta=formatear_porcentaje(acciones_cerradas, total_acciones))
+        with kpi_col6:
+            st.metric("Promedio cierre acciones", f"{promedio_cierre_acciones} días")
+        with kpi_col7:
+            st.metric("Documentos vigentes", documentos_vigentes, delta=f"Vencidos: {documentos_vencidos}")
+        with kpi_col8:
+            st.metric("Versiones pendientes", versiones_pendientes)
+
+        serie_nc_registradas = construir_serie_mensual(df_nc_ind, "Fecha detección", "NC registradas", meses_analisis)
+        serie_nc_cerradas = construir_serie_mensual(df_nc_ind[df_nc_ind["Estado"] == "Cerrada"], "Fecha cierre", "NC cerradas", meses_analisis) if not df_nc_ind.empty else pd.DataFrame()
+        serie_acc_registradas = construir_serie_mensual(df_acc_ind, "Fecha inicio", "Acciones registradas", meses_analisis)
+        serie_acc_cerradas = construir_serie_mensual(df_acc_ind[df_acc_ind["Estado"] == "Cerrada"], "Fecha cierre", "Acciones cerradas", meses_analisis) if not df_acc_ind.empty else pd.DataFrame()
+
+        df_tendencia_nc = combinar_series_mensuales(serie_nc_registradas, serie_nc_cerradas)
+        df_tendencia_acc = combinar_series_mensuales(serie_acc_registradas, serie_acc_cerradas)
+
+        graf_col1, graf_col2 = st.columns(2)
+        with graf_col1:
+            st.write("### Tendencia mensual de no conformidades")
+            if not df_tendencia_nc.empty:
+                st.line_chart(df_tendencia_nc.set_index("Mes"))
+            else:
+                st.info("Todavía no hay datos suficientes para esta tendencia.")
+        with graf_col2:
+            st.write("### Tendencia mensual de acciones")
+            if not df_tendencia_acc.empty:
+                st.line_chart(df_tendencia_acc.set_index("Mes"))
+            else:
+                st.info("Todavía no hay datos suficientes para esta tendencia.")
+
+        dist_col1, dist_col2 = st.columns(2)
+        with dist_col1:
+            st.write("### NC abiertas por área")
+            if not df_nc_ind.empty:
+                abiertas_por_area = df_nc_ind[df_nc_ind["Estado"] != "Cerrada"]["Área"].value_counts()
+                if not abiertas_por_area.empty:
+                    st.bar_chart(abiertas_por_area)
+                else:
+                    st.info("No hay no conformidades abiertas para este corte.")
+            else:
+                st.info("Sin datos de no conformidades.")
+        with dist_col2:
+            st.write("### Acciones vencidas por responsable")
+            if not df_acc_ind.empty:
+                vencidas_responsable = df_acc_ind[
+                    (df_acc_ind["Estado"] != "Cerrada")
+                    & (pd.to_datetime(df_acc_ind["Fecha compromiso"], errors="coerce") < pd.Timestamp.today().normalize())
+                ]["Responsable"].value_counts()
+                if not vencidas_responsable.empty:
+                    st.bar_chart(vencidas_responsable)
+                else:
+                    st.info("No hay acciones vencidas registradas.")
+            else:
+                st.info("Sin datos de acciones.")
+
+        dist_col3, dist_col4 = st.columns(2)
+        with dist_col3:
+            st.write("### Hallazgos por severidad")
+            if not df_hall_ind.empty:
+                st.bar_chart(df_hall_ind["Severidad"].value_counts())
+            else:
+                st.info("Sin hallazgos de auditoría registrados.")
+        with dist_col4:
+            st.write("### Estado documental")
+            if not df_docs_ind.empty:
+                st.bar_chart(df_docs_ind["Estado"].value_counts())
+            else:
+                st.info("Sin documentos registrados.")
+
+        tabla_indicadores = pd.DataFrame(
+            [
+                {"Indicador": "Porcentaje de cierre de no conformidades", "Valor": formatear_porcentaje(nc_cerradas, total_nc), "Lectura": "Mide la capacidad de cerrar hallazgos detectados."},
+                {"Indicador": "Porcentaje de cierre de acciones", "Valor": formatear_porcentaje(acciones_cerradas, total_acciones), "Lectura": "Mide el seguimiento real a acciones correctivas y preventivas."},
+                {"Indicador": "Tiempo promedio de cierre de NC", "Valor": f"{promedio_cierre_nc} días", "Lectura": "Entre menor sea, más rápido responde el sistema de calidad."},
+                {"Indicador": "Tiempo promedio de cierre de acciones", "Valor": f"{promedio_cierre_acciones} días", "Lectura": "Ayuda a detectar cuellos de botella en la ejecución."},
+                {"Indicador": "Cumplimiento de auditorías", "Valor": formatear_porcentaje(auditorias_cerradas, total_auditorias), "Lectura": "Mide disciplina sobre auditorías planeadas."},
+                {"Indicador": "Documentos vigentes sin vencer", "Valor": max(documentos_vigentes - documentos_vencidos, 0), "Lectura": "Refleja el nivel de control documental efectivo."},
+            ]
+        )
+
+        st.write("### Resumen de indicadores")
+        st.dataframe(tabla_indicadores, use_container_width=True, hide_index=True)
+
 
 st.sidebar.title("Navegación")
 seccion = st.sidebar.radio(
@@ -2430,6 +2769,7 @@ elif seccion == "Calidad":
     mostrar_calidad()
 
 st.sidebar.write(f"Sesión: {st.session_state.get('usuario_email', '')}")
+st.sidebar.write(f"Perfil: {rol_actual().capitalize()}")
 if st.session_state.get("es_admin", False):
     with st.sidebar:
         st.subheader("Aprobación de usuarios")
@@ -2439,16 +2779,41 @@ if st.session_state.get("es_admin", False):
         if pendientes:
             for id_usuario, email, fecha_registro in pendientes:
                 st.write(f"{email} - registrado el {fecha_registro}")
+                rol_aprobacion = st.selectbox(
+                    f"Rol para {email}",
+                    ["captura", "responsable", "auditor", "calidad", "admin"],
+                    format_func=lambda valor: valor.capitalize(),
+                    key=f"rol_aprobacion_{id_usuario}",
+                )
                 if st.button("Aprobar", key=f"aprobar_{id_usuario}", use_container_width=True):
-                    aprobar_usuario(id_usuario)
+                    aprobar_usuario(id_usuario, rol_aprobacion)
                     st.success(f"Usuario {email} aprobado.")
                     st.rerun()
         else:
             st.info("No hay usuarios pendientes.")
 
+        st.subheader("Roles activos")
+        usuarios_registrados = listar_usuarios()
+        usuarios_aprobados = [fila for fila in usuarios_registrados if fila[2] == 1]
+        if usuarios_aprobados:
+            for id_usuario, email, _, _, rol, _ in usuarios_aprobados:
+                nuevo_rol = st.selectbox(
+                    email,
+                    ROLES_USUARIO,
+                    index=ROLES_USUARIO.index(rol if rol in ROLES_USUARIO else "captura"),
+                    format_func=lambda valor: valor.capitalize(),
+                    key=f"rol_usuario_{id_usuario}",
+                )
+                if st.button("Actualizar rol", key=f"actualizar_rol_{id_usuario}", use_container_width=True):
+                    actualizar_rol_usuario(id_usuario, nuevo_rol)
+                    st.success(f"Rol de {email} actualizado a {nuevo_rol}.")
+                    st.rerun()
+        else:
+            st.info("Todavía no hay usuarios aprobados para administrar.")
+
 if st.sidebar.button("Cerrar sesión"):
     st.session_state["autenticado"] = False
     st.session_state["usuario_email"] = ""
     st.session_state["es_admin"] = False
+    st.session_state["rol_usuario"] = "captura"
     st.rerun()
-
