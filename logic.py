@@ -7,6 +7,49 @@ import bcrypt
 import pandas as pd
 
 from database import DOCUMENTOS_DIR, EVIDENCIAS_DIR, conectar_db
+from supabase_quality import (
+    aprobar_cierre_accion as sb_aprobar_cierre_accion,
+    aprobar_cierre_no_conformidad as sb_aprobar_cierre_no_conformidad,
+    aprobar_version_documento as sb_aprobar_version_documento,
+    configure_supabase_quality,
+    contar_acciones_abiertas as sb_contar_acciones_abiertas,
+    contar_acciones_vencidas as sb_contar_acciones_vencidas,
+    contar_no_conformidades_abiertas as sb_contar_no_conformidades_abiertas,
+    descargar_archivo_storage,
+    get_quality_backend_label,
+    guardar_evidencia_calidad as sb_guardar_evidencia_calidad,
+    listar_acciones_calidad as sb_listar_acciones_calidad,
+    listar_auditorias_calidad as sb_listar_auditorias_calidad,
+    listar_bitacora_calidad as sb_listar_bitacora_calidad,
+    listar_documentos_calidad as sb_listar_documentos_calidad,
+    listar_evidencias_calidad as sb_listar_evidencias_calidad,
+    listar_hallazgos_auditoria as sb_listar_hallazgos_auditoria,
+    listar_no_conformidades as sb_listar_no_conformidades,
+    listar_versiones_documento as sb_listar_versiones_documento,
+    registrar_accion_calidad as sb_registrar_accion_calidad,
+    registrar_auditoria_calidad as sb_registrar_auditoria_calidad,
+    registrar_documento_calidad as sb_registrar_documento_calidad,
+    registrar_hallazgo_auditoria as sb_registrar_hallazgo_auditoria,
+    registrar_no_conformidad as sb_registrar_no_conformidad,
+    registrar_version_documento as sb_registrar_version_documento,
+    supabase_quality_enabled,
+    actualizar_accion_calidad as sb_actualizar_accion_calidad,
+    actualizar_estado_accion_calidad as sb_actualizar_estado_accion_calidad,
+    actualizar_estado_no_conformidad as sb_actualizar_estado_no_conformidad,
+    actualizar_no_conformidad as sb_actualizar_no_conformidad,
+)
+from supabase_users import (
+    aprobar_usuario as sb_aprobar_usuario,
+    autenticar_usuario as sb_autenticar_usuario,
+    configure_supabase_users,
+    crear_admin_inicial as sb_crear_admin_inicial,
+    get_users_backend_label,
+    listar_usuarios as sb_listar_usuarios,
+    obtener_usuarios_pendientes as sb_obtener_usuarios_pendientes,
+    registrar_usuario as sb_registrar_usuario,
+    supabase_users_enabled,
+    actualizar_rol_usuario as sb_actualizar_rol_usuario,
+)
 
 
 def sumar_meses(fecha_str, meses):
@@ -586,7 +629,72 @@ def usuario_tiene_rol(rol_usuario: str | None, *roles_permitidos: str, es_admin:
     return rol_normalizado == "admin" or rol_normalizado in permitidos
 
 
+def configurar_persistencia_calidad_supabase(
+    *,
+    url: str | None,
+    key: str | None,
+    enabled: bool = False,
+    evidencias_bucket: str = "calidad-evidencias",
+    documentos_bucket: str = "calidad-documentos",
+):
+    configure_supabase_quality(
+        url=url,
+        key=key,
+        enabled=enabled,
+        evidencias_bucket=evidencias_bucket,
+        documentos_bucket=documentos_bucket,
+    )
+
+
+def calidad_usa_supabase() -> bool:
+    return supabase_quality_enabled()
+
+
+def obtener_backend_calidad() -> str:
+    return get_quality_backend_label()
+
+
+def configurar_persistencia_usuarios_supabase(
+    *,
+    url: str | None,
+    key: str | None,
+    enabled: bool = False,
+    table_name: str = "usuarios_app",
+):
+    configure_supabase_users(
+        url=url,
+        key=key,
+        enabled=enabled,
+        table_name=table_name,
+    )
+
+
+def usuarios_usan_supabase() -> bool:
+    return supabase_users_enabled()
+
+
+def obtener_backend_usuarios() -> str:
+    return get_users_backend_label()
+
+
+def descargar_evidencia_calidad(ruta_archivo: str) -> bytes:
+    if calidad_usa_supabase():
+        return descargar_archivo_storage("calidad-evidencias", ruta_archivo)
+    with open(ruta_archivo, "rb") as archivo:
+        return archivo.read()
+
+
+def descargar_documento_calidad(ruta_archivo: str) -> bytes:
+    if calidad_usa_supabase():
+        return descargar_archivo_storage("calidad-documentos", ruta_archivo)
+    with open(ruta_archivo, "rb") as archivo:
+        return archivo.read()
+
+
 def registrar_usuario(email: str, password: str, rol: str = "captura"):
+    if usuarios_usan_supabase():
+        return sb_registrar_usuario(email, password, normalizar_rol(rol))
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -603,6 +711,9 @@ def registrar_usuario(email: str, password: str, rol: str = "captura"):
 
 
 def autenticar_usuario(email: str, password: str):
+    if usuarios_usan_supabase():
+        return sb_autenticar_usuario(email, password, normalizar_rol)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -636,6 +747,9 @@ def autenticar_usuario(email: str, password: str):
 
 
 def obtener_usuarios_pendientes():
+    if usuarios_usan_supabase():
+        return sb_obtener_usuarios_pendientes()
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -652,6 +766,9 @@ def obtener_usuarios_pendientes():
 
 
 def listar_usuarios():
+    if usuarios_usan_supabase():
+        return sb_listar_usuarios()
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -667,6 +784,9 @@ def listar_usuarios():
 
 
 def aprobar_usuario(id_usuario: int, rol: str = "captura"):
+    if usuarios_usan_supabase():
+        return sb_aprobar_usuario(id_usuario, normalizar_rol(rol, rol == "admin"))
+
     conn = conectar_db()
     cursor = conn.cursor()
     rol_normalizado = normalizar_rol(rol)
@@ -684,6 +804,9 @@ def aprobar_usuario(id_usuario: int, rol: str = "captura"):
 
 
 def actualizar_rol_usuario(id_usuario: int, rol: str):
+    if usuarios_usan_supabase():
+        return sb_actualizar_rol_usuario(id_usuario, normalizar_rol(rol, rol == "admin"))
+
     conn = conectar_db()
     cursor = conn.cursor()
     rol_normalizado = normalizar_rol(rol, rol == "admin")
@@ -699,6 +822,9 @@ def actualizar_rol_usuario(id_usuario: int, rol: str):
     conn.close()
 
 def crear_admin_inicial(email: str, password: str):
+    if usuarios_usan_supabase():
+        return sb_crear_admin_inicial(email, password)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -721,6 +847,9 @@ def crear_admin_inicial(email: str, password: str):
 
 
 def registrar_no_conformidad(datos):
+    if calidad_usa_supabase():
+        return sb_registrar_no_conformidad(datos)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -763,6 +892,9 @@ def registrar_no_conformidad(datos):
 
 
 def registrar_accion_calidad(datos):
+    if calidad_usa_supabase():
+        return sb_registrar_accion_calidad(datos)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -800,6 +932,9 @@ def registrar_accion_calidad(datos):
 
 
 def actualizar_no_conformidad(datos):
+    if calidad_usa_supabase():
+        return sb_actualizar_no_conformidad(datos)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -845,6 +980,9 @@ def actualizar_no_conformidad(datos):
 
 
 def actualizar_accion_calidad(datos):
+    if calidad_usa_supabase():
+        return sb_actualizar_accion_calidad(datos)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -882,6 +1020,9 @@ def actualizar_accion_calidad(datos):
 
 
 def listar_no_conformidades():
+    if calidad_usa_supabase():
+        return sb_listar_no_conformidades()
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -900,6 +1041,9 @@ def listar_no_conformidades():
 
 
 def listar_acciones_calidad():
+    if calidad_usa_supabase():
+        return sb_listar_acciones_calidad()
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -931,6 +1075,9 @@ def listar_acciones_calidad():
 
 
 def contar_no_conformidades_abiertas():
+    if calidad_usa_supabase():
+        return sb_contar_no_conformidades_abiertas()
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -945,6 +1092,9 @@ def contar_no_conformidades_abiertas():
 
 
 def contar_acciones_abiertas():
+    if calidad_usa_supabase():
+        return sb_contar_acciones_abiertas()
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -959,6 +1109,9 @@ def contar_acciones_abiertas():
 
 
 def contar_acciones_vencidas():
+    if calidad_usa_supabase():
+        return sb_contar_acciones_vencidas()
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -998,6 +1151,9 @@ def _registrar_evento_calidad_cursor(
 
 
 def listar_bitacora_calidad(limit: int = 200):
+    if calidad_usa_supabase():
+        return sb_listar_bitacora_calidad(limit)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -1024,6 +1180,15 @@ def actualizar_estado_no_conformidad(
 ):
     if nuevo_estado == "Cerrada" and not usuario_tiene_rol(rol_usuario, "calidad", es_admin=es_admin):
         raise PermissionError("Solo usuarios de calidad o administradores pueden cerrar una no conformidad.")
+
+    if calidad_usa_supabase():
+        return sb_actualizar_estado_no_conformidad(
+            id_no_conformidad=id_no_conformidad,
+            nuevo_estado=nuevo_estado,
+            causa_raiz=causa_raiz,
+            verificacion_cierre=verificacion_cierre,
+            usuario_email=usuario_email,
+        )
 
     conn = conectar_db()
     cursor = conn.cursor()
@@ -1077,6 +1242,14 @@ def actualizar_estado_accion_calidad(
     if nuevo_estado == "Cerrada" and not usuario_tiene_rol(rol_usuario, "calidad", es_admin=es_admin):
         raise PermissionError("Solo usuarios de calidad o administradores pueden cerrar una acción.")
 
+    if calidad_usa_supabase():
+        return sb_actualizar_estado_accion_calidad(
+            id_accion=id_accion,
+            nuevo_estado=nuevo_estado,
+            verificacion_eficacia=verificacion_eficacia,
+            usuario_email=usuario_email,
+        )
+
     conn = conectar_db()
     cursor = conn.cursor()
     fecha_cierre = datetime.now().strftime("%Y-%m-%d") if nuevo_estado == "Cerrada" else None
@@ -1127,6 +1300,14 @@ def aprobar_cierre_no_conformidad(
 ):
     if not usuario_tiene_rol(rol_usuario, "calidad", es_admin=es_admin):
         raise PermissionError("Solo usuarios de calidad o administradores pueden aprobar el cierre formal de una no conformidad.")
+
+    if calidad_usa_supabase():
+        return sb_aprobar_cierre_no_conformidad(
+            id_no_conformidad=id_no_conformidad,
+            aprobado_por=aprobado_por,
+            comentario_final=comentario_final,
+            verificacion_cierre=verificacion_cierre,
+        )
 
     conn = conectar_db()
     cursor = conn.cursor()
@@ -1180,6 +1361,14 @@ def aprobar_cierre_accion(
     if not usuario_tiene_rol(rol_usuario, "calidad", es_admin=es_admin):
         raise PermissionError("Solo usuarios de calidad o administradores pueden aprobar el cierre formal de una acción.")
 
+    if calidad_usa_supabase():
+        return sb_aprobar_cierre_accion(
+            id_accion=id_accion,
+            aprobado_por=aprobado_por,
+            comentario_final=comentario_final,
+            verificacion_eficacia=verificacion_eficacia,
+        )
+
     conn = conectar_db()
     cursor = conn.cursor()
     fecha_actual = datetime.now().strftime("%Y-%m-%d")
@@ -1229,6 +1418,16 @@ def guardar_evidencia_calidad(
     descripcion: str,
     subido_por: str,
 ):
+    if calidad_usa_supabase():
+        return sb_guardar_evidencia_calidad(
+            tipo_entidad=tipo_entidad,
+            id_entidad=id_entidad,
+            nombre_archivo_original=nombre_archivo_original,
+            contenido_archivo=contenido_archivo,
+            descripcion=descripcion,
+            subido_por=subido_por,
+        )
+
     extension = Path(nombre_archivo_original).suffix
     nombre_guardado = f"{tipo_entidad}_{id_entidad}_{uuid.uuid4().hex}{extension}"
     ruta_destino = EVIDENCIAS_DIR / nombre_guardado
@@ -1267,6 +1466,9 @@ def guardar_evidencia_calidad(
 
 
 def listar_evidencias_calidad(tipo_entidad: str, id_entidad: int):
+    if calidad_usa_supabase():
+        return sb_listar_evidencias_calidad(tipo_entidad, id_entidad)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -1283,6 +1485,9 @@ def listar_evidencias_calidad(tipo_entidad: str, id_entidad: int):
 
 
 def registrar_documento_calidad(datos):
+    if calidad_usa_supabase():
+        return sb_registrar_documento_calidad(datos)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -1321,6 +1526,9 @@ def registrar_documento_calidad(datos):
 
 
 def listar_documentos_calidad():
+    if calidad_usa_supabase():
+        return sb_listar_documentos_calidad()
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -1347,6 +1555,16 @@ def registrar_version_documento(
     nombre_archivo_original: str | None = None,
     contenido_archivo: bytes | None = None,
 ):
+    if calidad_usa_supabase():
+        return sb_registrar_version_documento(
+            id_documento=id_documento,
+            version=version,
+            cambios_resumen=cambios_resumen,
+            elaborado_por=elaborado_por,
+            nombre_archivo_original=nombre_archivo_original,
+            contenido_archivo=contenido_archivo,
+        )
+
     ruta_destino = None
 
     if nombre_archivo_original and contenido_archivo is not None:
@@ -1394,6 +1612,9 @@ def registrar_version_documento(
 
 
 def listar_versiones_documento(id_documento: int):
+    if calidad_usa_supabase():
+        return sb_listar_versiones_documento(id_documento)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -1424,6 +1645,16 @@ def aprobar_version_documento(
 ):
     if not usuario_tiene_rol(rol_usuario, "calidad", es_admin=es_admin):
         raise PermissionError("Solo usuarios de calidad o administradores pueden aprobar una versión documental.")
+
+    if calidad_usa_supabase():
+        return sb_aprobar_version_documento(
+            id_documento=id_documento,
+            id_version=id_version,
+            aprobado_por=aprobado_por,
+            vigente_desde=vigente_desde,
+            vigente_hasta=vigente_hasta,
+            estado_documento=estado_documento,
+        )
 
     conn = conectar_db()
     cursor = conn.cursor()
@@ -1484,6 +1715,9 @@ def aprobar_version_documento(
 
 
 def registrar_auditoria_calidad(datos):
+    if calidad_usa_supabase():
+        return sb_registrar_auditoria_calidad(datos)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -1522,6 +1756,9 @@ def registrar_auditoria_calidad(datos):
 
 
 def listar_auditorias_calidad():
+    if calidad_usa_supabase():
+        return sb_listar_auditorias_calidad()
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -1539,6 +1776,9 @@ def listar_auditorias_calidad():
 
 
 def registrar_hallazgo_auditoria(datos):
+    if calidad_usa_supabase():
+        return sb_registrar_hallazgo_auditoria(datos)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -1575,6 +1815,9 @@ def registrar_hallazgo_auditoria(datos):
 
 
 def listar_hallazgos_auditoria():
+    if calidad_usa_supabase():
+        return sb_listar_hallazgos_auditoria()
+
     conn = conectar_db()
     cursor = conn.cursor()
 

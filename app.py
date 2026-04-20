@@ -35,6 +35,10 @@ from logic import (
     contar_racks_activos,
     contar_visitas_pendientes,
     contar_voluntarios,
+    configurar_persistencia_calidad_supabase,
+    configurar_persistencia_usuarios_supabase,
+    descargar_documento_calidad,
+    descargar_evidencia_calidad,
     exportar_a_excel,
     guardar_evidencia_calidad,
     listar_auditorias_calidad,
@@ -47,6 +51,8 @@ from logic import (
     listar_usuarios,
     listar_versiones_documento,
     obtener_ocupacion_racks,
+    obtener_backend_calidad,
+    obtener_backend_usuarios,
     obtener_usuarios_pendientes,
     registrar_auditoria_calidad,
     registrar_accion_calidad,
@@ -68,6 +74,20 @@ from logic import crear_admin_inicial
 
 st.set_page_config(page_title="Sistema INER - Voluntarios", layout="wide")
 crear_tablas()
+
+configurar_persistencia_calidad_supabase(
+    url=st.secrets.get("supabase_url", ""),
+    key=st.secrets.get("supabase_key", ""),
+    enabled=bool(st.secrets.get("use_supabase_quality", False)),
+    evidencias_bucket=st.secrets.get("supabase_quality_evidencias_bucket", "calidad-evidencias"),
+    documentos_bucket=st.secrets.get("supabase_quality_documentos_bucket", "calidad-documentos"),
+)
+configurar_persistencia_usuarios_supabase(
+    url=st.secrets.get("supabase_url", ""),
+    key=st.secrets.get("supabase_key", ""),
+    enabled=bool(st.secrets.get("use_supabase_users", False)),
+    table_name=st.secrets.get("supabase_users_table", "usuarios_app"),
+)
 
 crear_admin_inicial(
     st.secrets["admin_email"],
@@ -681,42 +701,15 @@ def generar_excel_ejecutivo(secciones):
 def generar_pdf_ejecutivo(resumen_lineas, secciones):
     try:
         from reportlab.lib import colors
-        from reportlab.lib.pagesizes import landscape, letter
-        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-        from reportlab.lib.units import inch
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet
         from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
     except ImportError as exc:
         raise RuntimeError("Instala reportlab para exportar a PDF.") from exc
 
     buffer = BytesIO()
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=landscape(letter),
-        leftMargin=0.45 * inch,
-        rightMargin=0.45 * inch,
-        topMargin=0.45 * inch,
-        bottomMargin=0.45 * inch,
-    )
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
     styles = getSampleStyleSheet()
-    estilo_celda = ParagraphStyle(
-        "CeldaPDF",
-        parent=styles["BodyText"],
-        fontName="Helvetica",
-        fontSize=7,
-        leading=9,
-        spaceAfter=0,
-        spaceBefore=0,
-    )
-    estilo_header = ParagraphStyle(
-        "HeaderPDF",
-        parent=styles["BodyText"],
-        fontName="Helvetica-Bold",
-        fontSize=7,
-        leading=9,
-        textColor=colors.HexColor("#16324f"),
-        spaceAfter=0,
-        spaceBefore=0,
-    )
     elementos = [Paragraph("Reporte ejecutivo de calidad", styles["Title"]), Spacer(1, 12)]
 
     for linea in resumen_lineas:
@@ -732,47 +725,16 @@ def generar_pdf_ejecutivo(resumen_lineas, secciones):
             continue
 
         df = df.head(15)
-        df = df.fillna("").astype(str)
-
-        columnas = df.columns.tolist()
-        anchos_relativos = []
-        for columna in columnas:
-            largo_columna = len(str(columna))
-            largo_datos = df[columna].map(len).max() if not df.empty else 0
-            ancho = min(max(largo_columna, largo_datos, 10), 28)
-            anchos_relativos.append(ancho)
-
-        ancho_disponible = doc.width
-        suma_anchos = sum(anchos_relativos) or 1
-        col_widths = [(ancho / suma_anchos) * ancho_disponible for ancho in anchos_relativos]
-
-        ancho_minimo = 0.75 * inch
-        ancho_maximo = 2.1 * inch
-        col_widths = [min(max(ancho, ancho_minimo), ancho_maximo) for ancho in col_widths]
-
-        total_ajustado = sum(col_widths)
-        if total_ajustado > ancho_disponible:
-            factor = ancho_disponible / total_ajustado
-            col_widths = [ancho * factor for ancho in col_widths]
-
-        tabla_data = [
-            [Paragraph(str(columna), estilo_header) for columna in columnas]
-        ]
-        for fila in df.values.tolist():
-            tabla_data.append([Paragraph(str(valor), estilo_celda) for valor in fila])
-
-        tabla = Table(tabla_data, repeatRows=1, colWidths=col_widths)
+        tabla_data = [df.columns.tolist()] + df.fillna("").astype(str).values.tolist()
+        tabla = Table(tabla_data, repeatRows=1)
         tabla.setStyle(
             TableStyle(
                 [
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d9edf2")),
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#16324f")),
                     ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d4de")),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-                    ("TOPPADDING", (0, 0), (-1, -1), 4),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
                     ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fbfc")]),
                 ]
             )
@@ -784,6 +746,7 @@ def generar_pdf_ejecutivo(resumen_lineas, secciones):
 
 def pantalla_acceso():
     st.title("Acceso al sistema")
+    st.caption(f"Persistencia de usuarios: {obtener_backend_usuarios()}")
     pestana_login, pestana_registro = st.tabs(["Iniciar sesión", "Crear cuenta"])
 
     with pestana_login:
@@ -1298,6 +1261,7 @@ def mostrar_calidad():
         "Captura registra información, Responsable da seguimiento, Auditor gestiona auditorías, "
         "Calidad aprueba cierres y documentos, Admin conserva control total."
     )
+    st.caption(f"Persistencia de Calidad: {obtener_backend_calidad()}")
 
     col1, col2, col3 = st.columns(3)
     with col1:
