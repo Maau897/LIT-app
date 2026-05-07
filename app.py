@@ -36,6 +36,7 @@ from logic import (
     contar_visitas_pendientes,
     contar_voluntarios,
     configurar_persistencia_calidad_supabase,
+    configurar_persistencia_biobanco_supabase,
     configurar_persistencia_usuarios_supabase,
     descargar_documento_calidad,
     descargar_evidencia_calidad,
@@ -52,6 +53,7 @@ from logic import (
     listar_versiones_documento,
     obtener_ocupacion_racks,
     obtener_backend_calidad,
+    obtener_backend_biobanco,
     obtener_backend_usuarios,
     obtener_usuarios_pendientes,
     registrar_auditoria_calidad,
@@ -87,6 +89,11 @@ configurar_persistencia_usuarios_supabase(
     key=st.secrets.get("supabase_key", ""),
     enabled=bool(st.secrets.get("use_supabase_users", False)),
     table_name=st.secrets.get("supabase_users_table", "usuarios_app"),
+)
+configurar_persistencia_biobanco_supabase(
+    url=st.secrets.get("supabase_url", ""),
+    key=st.secrets.get("supabase_key", ""),
+    enabled=bool(st.secrets.get("use_supabase_biobanco", False)),
 )
 
 crear_admin_inicial(
@@ -808,6 +815,7 @@ if not st.session_state["autenticado"]:
 
 def mostrar_biobanco():
     st.title("Sistema de Seguimiento de Voluntarios y Biobanco")
+    st.caption(f"Persistencia de C23-25: {obtener_backend_biobanco()}")
 
     st.subheader("Dashboard resumen")
 

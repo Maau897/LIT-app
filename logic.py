@@ -50,6 +50,25 @@ from supabase_users import (
     supabase_users_enabled,
     actualizar_rol_usuario as sb_actualizar_rol_usuario,
 )
+from supabase_biobanco import (
+    configure_supabase_biobanco,
+    contar_racks_activos as sb_contar_racks_activos,
+    contar_visitas_pendientes as sb_contar_visitas_pendientes,
+    contar_voluntarios as sb_contar_voluntarios,
+    exportar_a_excel as sb_exportar_a_excel,
+    get_biobanco_backend_label,
+    inicializar_rack_suero as sb_inicializar_rack_suero,
+    obtener_ocupacion_racks as sb_obtener_ocupacion_racks,
+    registrar_voluntario as sb_registrar_voluntario,
+    buscar_voluntario_por_id as sb_buscar_voluntario_por_id,
+    supabase_biobanco_enabled,
+    ver_alicuotas_pbmc_voluntario as sb_ver_alicuotas_pbmc_voluntario,
+    ver_alicuotas_suero_voluntario as sb_ver_alicuotas_suero_voluntario,
+    ver_rack_pbmc as sb_ver_rack_pbmc,
+    ver_rack_suero as sb_ver_rack_suero,
+    ver_racks as sb_ver_racks,
+    ver_visitas as sb_ver_visitas,
+)
 
 
 def sumar_meses(fecha_str, meses):
@@ -62,6 +81,9 @@ def sumar_meses(fecha_str, meses):
 
 
 def inicializar_rack_suero():
+    if biobanco_usa_supabase():
+        return sb_inicializar_rack_suero()
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -214,6 +236,9 @@ def _asignar_alicuotas_pbmc_cursor(cursor, id_voluntario, tipo_toma, fecha_ingre
 
 
 def registrar_voluntario(datos):
+    if biobanco_usa_supabase():
+        return sb_registrar_voluntario(datos)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -315,6 +340,9 @@ def asignar_alicuotas_suero(id_voluntario, tipo_toma, fecha_ingreso, cantidad=6)
 
 
 def ver_visitas(id_voluntario):
+    if biobanco_usa_supabase():
+        return sb_ver_visitas(id_voluntario)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -332,6 +360,10 @@ def ver_visitas(id_voluntario):
 
 
 def ver_alicuotas_suero(id_voluntario):
+    if biobanco_usa_supabase():
+        filas = sb_ver_alicuotas_suero_voluntario(id_voluntario)
+        return [(numero, fecha, rack, fila, columna) for numero, fecha, rack, fila, columna, _ in filas]
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -349,6 +381,9 @@ def ver_alicuotas_suero(id_voluntario):
 
 
 def ver_rack_suero(id_rack="SUERO_1"):
+    if biobanco_usa_supabase():
+        return sb_ver_rack_suero(id_rack)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -387,6 +422,9 @@ def imprimir_rack(rack):
 
 
 def ver_racks():
+    if biobanco_usa_supabase():
+        return sb_ver_racks()
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -452,6 +490,9 @@ def asignar_alicuotas_pbmc(id_voluntario, tipo_toma, fecha_ingreso, cantidad, co
 
 
 def ver_rack_pbmc(id_rack):
+    if biobanco_usa_supabase():
+        return sb_ver_rack_pbmc(id_rack)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -481,6 +522,9 @@ def obtener_tabla(nombre_tabla):
 
 
 def exportar_a_excel(nombre_archivo="reporte_biobanco.xlsx"):
+    if biobanco_usa_supabase():
+        return sb_exportar_a_excel(nombre_archivo)
+
     df_voluntarios = obtener_tabla("voluntarios")
     df_visitas = obtener_tabla("visitas")
     df_suero = obtener_tabla("alicuotas_suero")
@@ -498,6 +542,9 @@ def exportar_a_excel(nombre_archivo="reporte_biobanco.xlsx"):
 
 
 def buscar_voluntario_por_id(id_voluntario):
+    if biobanco_usa_supabase():
+        return sb_buscar_voluntario_por_id(id_voluntario)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -514,6 +561,9 @@ def buscar_voluntario_por_id(id_voluntario):
 
 
 def ver_alicuotas_suero_voluntario(id_voluntario):
+    if biobanco_usa_supabase():
+        return sb_ver_alicuotas_suero_voluntario(id_voluntario)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -531,6 +581,9 @@ def ver_alicuotas_suero_voluntario(id_voluntario):
 
 
 def ver_alicuotas_pbmc_voluntario(id_voluntario):
+    if biobanco_usa_supabase():
+        return sb_ver_alicuotas_pbmc_voluntario(id_voluntario)
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -548,6 +601,9 @@ def ver_alicuotas_pbmc_voluntario(id_voluntario):
 
 
 def contar_voluntarios():
+    if biobanco_usa_supabase():
+        return sb_contar_voluntarios()
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -559,6 +615,9 @@ def contar_voluntarios():
 
 
 def contar_visitas_pendientes():
+    if biobanco_usa_supabase():
+        return sb_contar_visitas_pendientes()
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -574,6 +633,9 @@ def contar_visitas_pendientes():
 
 
 def contar_racks_activos():
+    if biobanco_usa_supabase():
+        return sb_contar_racks_activos()
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -585,6 +647,9 @@ def contar_racks_activos():
 
 
 def obtener_ocupacion_racks():
+    if biobanco_usa_supabase():
+        return sb_obtener_ocupacion_racks()
+
     conn = conectar_db()
     cursor = conn.cursor()
 
@@ -675,6 +740,27 @@ def usuarios_usan_supabase() -> bool:
 
 def obtener_backend_usuarios() -> str:
     return get_users_backend_label()
+
+
+def configurar_persistencia_biobanco_supabase(
+    *,
+    url: str | None,
+    key: str | None,
+    enabled: bool = False,
+):
+    configure_supabase_biobanco(
+        url=url,
+        key=key,
+        enabled=enabled,
+    )
+
+
+def biobanco_usa_supabase() -> bool:
+    return supabase_biobanco_enabled()
+
+
+def obtener_backend_biobanco() -> str:
+    return get_biobanco_backend_label()
 
 
 def descargar_evidencia_calidad(ruta_archivo: str) -> bytes:
